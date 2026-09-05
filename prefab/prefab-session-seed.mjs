@@ -20,6 +20,8 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { sessionEvents } from './compaction-epoch.mjs'
+
 export const name = 'prefab-session-seed'
 export const inject = ['agents', 'skills']
 
@@ -408,7 +410,7 @@ export function synchronizeAgentTurnCursor(agent, session) {
   if (agent.status !== 'idle' || phase?.kind !== 'idle' || !Number.isSafeInteger(phase.lastTurn)) {
     throw new Error(`${name}: live agent is not an idle compatible ReactLoopAgent`)
   }
-  const lastTurn = session.events.findLast((event) => event.type === 'turn/start')?.data?.turn ?? 0
+  const lastTurn = sessionEvents(session).findLast((event) => event.type === 'turn/start')?.data?.turn ?? 0
   if (!Number.isSafeInteger(lastTurn) || lastTurn < 0) {
     throw new Error(`${name}: seeded transcript has an invalid final turn`)
   }
@@ -418,7 +420,7 @@ export function synchronizeAgentTurnCursor(agent, session) {
 
 /** Append the compact template while remapping retained provenance seqs. */
 export function seedSession(session, plan, title = READY_TITLE) {
-  if (session.events.some((event) => event.type === 'turn/start')) return false
+  if (sessionEvents(session).some((event) => event.type === 'turn/start')) return false
 
   const seqMap = new Map()
   for (const sourceEvent of plan) {
@@ -463,7 +465,7 @@ export function apply(ctx, config = {}) {
     const selected = event.type === 'agent-preset/selected' && event.data?.agentPreset === presetId
     const born = event.type === 'permission/preset' && session.header?.agentPreset === presetId
     if (!selected && !born) return
-    if (scheduled.has(session) || session.events.some((item) => item.type === 'turn/start')) return
+    if (scheduled.has(session) || sessionEvents(session).some((item) => item.type === 'turn/start')) return
     scheduled.add(session)
 
     // The selection event is still being published here. A microtask is the
@@ -475,7 +477,7 @@ export function apply(ctx, config = {}) {
     queueMicrotask(() => {
       ;(async () => {
         try {
-          if (session.events.some((item) => item.type === 'turn/start')) return
+          if (sessionEvents(session).some((item) => item.type === 'turn/start')) return
           const agent = ctx.get('agents')?.get(session.id)
           // ReactLoopAgent snapshots the final turn in its constructor. Preset
           // selection happens later, so validate that cursor before appending a

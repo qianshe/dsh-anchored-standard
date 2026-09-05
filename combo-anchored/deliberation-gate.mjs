@@ -44,6 +44,8 @@
  */
 
 /** Cordis plugin name used by loader diagnostics. */
+import { sessionEvents } from './compaction-epoch.mjs'
+
 export const name = 'deliberation-gate'
 
 /**
@@ -112,16 +114,14 @@ export function apply(ctx, config) {
     let entry = state.get(session.id)
     if (entry === undefined) {
       entry = { turns: new Map(), lastTurn: -1 }
-      if (Array.isArray(session.events)) {
-        for (const event of session.events) {
-          if (event.type !== 'assistant/chunk') continue
-          const turn = event.data?.turn
-          if (typeof turn !== 'number' || !Number.isFinite(turn)) continue
-          const text = event.data?.chunk?.text
-          observeChunk(session.id, turn, typeof text === 'string' ? text.length : 0)
-        }
-        entry = state.get(session.id) ?? entry
+      for (const event of sessionEvents(session)) {
+        if (event.type !== 'assistant/chunk') continue
+        const turn = event.data?.turn
+        if (typeof turn !== 'number' || !Number.isFinite(turn)) continue
+        const text = event.data?.chunk?.text
+        observeChunk(session.id, turn, typeof text === 'string' ? text.length : 0)
       }
+      entry = state.get(session.id) ?? entry
       if (entry.turns.size === 0) {
         // No streamed text anywhere: depth reads as zero on a sentinel turn,
         // so the session still gets exactly one gated call, then passes.

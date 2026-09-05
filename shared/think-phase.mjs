@@ -55,6 +55,8 @@
  */
 
 /** Cordis plugin name used by loader diagnostics. */
+import { sessionEvents } from './compaction-epoch.mjs'
+
 export const name = 'think-phase'
 
 /**
@@ -116,12 +118,10 @@ export function apply(ctx, config) {
     let entry = state.get(session.id)
     if (entry === undefined) {
       const steered = new Set()
-      if (Array.isArray(session.events)) {
-        for (const event of session.events) {
-          if (event.type !== 'steering/message') continue
-          if (event.data?.source?.plugin === name && typeof event.data?.turn === 'number') {
-            steered.add(event.data.turn)
-          }
+      for (const event of sessionEvents(session)) {
+        if (event.type !== 'steering/message') continue
+        if (event.data?.source?.plugin === name && typeof event.data?.turn === 'number') {
+          steered.add(event.data.turn)
         }
       }
       entry = { phase: 'execute', turn: null, steered }
@@ -148,8 +148,8 @@ export function apply(ctx, config) {
    */
   const unlockedFor = (session) => {
     const unlocked = new Set()
-    if (session === undefined || !Array.isArray(session.events)) return unlocked
-    for (const event of session.events) {
+    if (session === undefined) return unlocked
+    for (const event of sessionEvents(session)) {
       if (event.type !== 'tool/call') continue
       if (event.data?.name !== 'dev_tool_search') continue
       let args
@@ -175,7 +175,7 @@ export function apply(ctx, config) {
     if (entry === undefined) return decision
     entry.turn = turn
     const subagent = (agent.session.header?.delegationDepth ?? 0) > 0
-    const firstUserTurn = !Array.isArray(agent.session.events) || !agent.session.events.some((event) => event.type === 'user/message')
+    const firstUserTurn = !sessionEvents(agent.session).some((event) => event.type === 'user/message')
     const think = step === 0
       && (!subagent || includeSubagents)
       && (mode === 'every-turn' || firstUserTurn)

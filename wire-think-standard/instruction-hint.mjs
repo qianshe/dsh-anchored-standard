@@ -53,7 +53,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { createEpochPromotion } from './compaction-epoch.mjs'
+import { createEpochPromotion, sessionEvents } from './compaction-epoch.mjs'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'instruction-hint'
@@ -162,7 +162,7 @@ export function apply(ctx, config) {
   const hintIsDurable = (session) => {
     const known = hinted.get(session.id)
     if (known !== undefined) return known
-    const found = (Array.isArray(session.events) ? session.events : []).some((event) =>
+    const found = sessionEvents(session).some((event) =>
       event.type === 'user/message' && event.data?.source?.kind === 'instruction-hint',
     )
     hinted.set(session.id, found)

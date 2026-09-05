@@ -48,7 +48,7 @@
  *    so a bug can never brick every request of a session.
  */
 
-import { createEpochPromotion } from './compaction-epoch.mjs'
+import { createEpochPromotion, sessionEvents } from './compaction-epoch.mjs'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'zero-tool-bootstrap'
@@ -114,8 +114,8 @@ export function apply(ctx, config) {
    */
   const unlockedFor = (session) => {
     const unlocked = new Set()
-    if (session === undefined || !Array.isArray(session.events)) return unlocked
-    for (const event of session.events) {
+    if (session === undefined) return unlocked
+    for (const event of sessionEvents(session)) {
       if (event.type !== 'tool/call') continue
       if (event.data?.name !== 'dev_tool_search') continue
       let args

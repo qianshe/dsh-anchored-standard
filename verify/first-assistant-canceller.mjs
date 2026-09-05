@@ -33,7 +33,10 @@ export function createFirstAssistantCanceller({
   let cancelled = false
   const handle = setIntervalFn(() => {
     if (cancelled) return
-    const hit = agent?.session?.events?.some(
+    // Host 0.1.2 removed the Session.events getter (snapshotEvents() took over);
+    // the legacy shape stays readable for older hosts and for the unit tests.
+    const log = agent?.session?.snapshotEvents?.() ?? agent?.session?.events ?? []
+    const hit = log.some(
       (event) => event.type === 'assistant/message' && (event.seq ?? 0) >= (firstSeq ?? 0),
     )
     if (hit) {

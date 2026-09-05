@@ -72,6 +72,8 @@ const runToken = randomUUID()
 const runnerName = `prefab-probe-runner-${runToken}.mjs`
 const runnerFile = join(PROFILE_DIR, runnerName)
 copyFileSync(join(HERE, 'probe-clone-runner.mjs'), runnerFile)
+// Sidecar for the runner's `./compaction-epoch.mjs` import (see roll-prefab.mjs).
+copyFileSync(join(HERE, 'compaction-epoch.mjs'), join(PROFILE_DIR, 'compaction-epoch.mjs'))
 
 const results = []
 try {
@@ -85,6 +87,14 @@ try {
   disabled: true
 
 - insert:
+    # The anchored presets carry a modelSelectionSettings delegation row, which
+    # resolves the "subagentModelSelection" service in HOST scope. The web bundle
+    # ships that row; the headless bundle does not, so an unmodified headless
+    # mount throws "requires .../model-selection-settings in the Host scope".
+    # Add it here so headless verification composes what web actually runs.
+    - id: subagent-model-selection-settings
+      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
+
     - id: agent-presets
       name: '@deepseek-ai/dsh-agent-presets'
       config:
@@ -117,6 +127,7 @@ try {
   }
 } finally {
   rmSync(runnerFile, { force: true })
+  rmSync(join(PROFILE_DIR, 'compaction-epoch.mjs'), { force: true })
 }
 
 const tally = {}

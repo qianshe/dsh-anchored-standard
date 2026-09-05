@@ -96,6 +96,17 @@
 # Harness identity and per-tool guidance from changing the system prompt, while
 # runtime-context suppression leaves task and repository rules to user messages
 # and explicit file reads. Tool schemas and their runtime enforcement remain.
+#
+# NOT AUTHORITATIVE FOR CHILDREN (verified against dsh 0.1.2-rc.1 code): an
+# in-process child joins the PARENT's standing preset mount (agent-presets
+# composeFrom -> the parent's standing scope), and a delegation persona is
+# registered as a scoped section under the SAME name this row uses
+# ("deployment:persona", dsh-subagent applyChildComposition) — scoped sections
+# shadow same-named ones in dsh-system-prompt. So a subagent persona supplied
+# through tool-subagent's `persona` key does reach the child; only a child
+# delegated WITHOUT a persona keeps the text below. One caveat survives either
+# way: dsh-persona renders `complete: true` verbatim with no {{model}}/{{cwd}}
+# interpolation, so template markers in a delegation persona arrive LITERAL.
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
@@ -225,11 +236,20 @@
     sampleOverCapGlobResults: false
 
 # The Minimal preset's second tool: `str_replace_editor` over a bare local
-# filesystem, byte-identical in configuration to the official `minimal`
-# preset's `filesystem` group. The editor's own realm shadows the host's
-# sandboxed `fs` provider only inside this group, so the standard `read`/
-# `write`/`edit` tools keep the sandboxed fs while the bootstrap editor uses
-# the local one.
+# filesystem. Byte-identical in configuration to the official `minimal`
+# preset's `filesystem` group EXCEPT ONE deliberate difference (local
+# addition, Windows): the `description` override below. The schema's `path`
+# parameter example (`/repo/file.py`) and the bash shell's Git Bash output
+# (`/d/repo/file.ts`) both push the model toward drive-relative `/d/...`
+# paths; `dsh-fs-local` resolves them with Node `path.resolve` against its
+# `cwd`'s drive (e.g. `C:\d\...` when the host was launched from a C:
+# directory) and every call fails with ENOENT. The override keeps the
+# package's default text verbatim and adds one leading bullet that converts
+# the bash form first (`/d/x` → `D:\x`).
+#
+# The editor's own realm shadows the host's sandboxed `fs` provider only
+# inside this group, so the standard `read`/`write`/`edit` tools keep the
+# sandboxed fs while the bootstrap editor uses the local one.
 - id: bootstrap-filesystem
   name: cordis:group
   group: true
@@ -245,6 +265,18 @@
       name: '@deepseek-ai/dsh-tool-str-replace-editor'
       config:
         maxOutputChars: 16000
+        description: |-
+          Custom editing tool for viewing, creating and editing files
+          * On Windows, `path` must be a Windows absolute path with a drive letter (e.g. `D:\repo\file.ts`). The bash shell prints paths in Git Bash form (`/d/repo/file.ts`); convert them before passing them here (`/d/x` → `D:\x`) — the unconverted `/d/...` form does not resolve.
+          * State is persistent across command calls and discussions with the user
+          * If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep
+          * The `create` command cannot be used if the specified `path` already exists as a file
+          * If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
+
+          Notes for using the `str_replace` command:
+          * The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!
+          * If the `old_str` parameter is not unique in the file, the replacement will not be performed. Make sure to include enough context in `old_str` to make it unique
+          * The `new_str` parameter should contain the edited lines that should replace the `old_str`
 
 # ── background jobs ────────────────────────────────────────────────────────
 
@@ -355,6 +387,12 @@
 # that reaches it shares one entry-local realm here, and a consumer left
 # outside would resolve a host registry this preset does not populate.
 #
+# `modelSelectionSettings: true` needs one HOST row this preset cannot own:
+# `@deepseek-ai/dsh-tool-subagent/model-selection-settings` (the web bundle
+# inserts it; the headless bundle does NOT, so a headless mount of this preset
+# throws "requires ... in the Host scope"). Keep the two rows in sync — see the
+# note under `tool-subagent` below.
+#
 # `tool-subagent-report` is host-plane for the same reason as the registry,
 # not because a preset may not want it: it registers a CONTINUABLE SETUP on
 # that singleton rather than a tool this agent calls, and the setup list is
@@ -377,6 +415,15 @@
       config:
         provider: spawn
         toolName: subagent
+        # dsh 0.1.2+ interface: exposes the optional provider/model/reasoning_effort
+        # params plus the global `list_subagent_models` discovery tool.
+        # HOST PREREQUISITE — a new Session samples its allowed-route list from the
+        # `subagent-model-selection` setting (web bundle row
+        # `@deepseek-ai/dsh-tool-subagent/model-selection-settings`). Sampling happens
+        # ONCE per Session and is recorded durably, so: an empty allow-list with
+        # `enabled: true` throws at HOST START, a restored Session that predates the
+        # event stays model-selection-disabled, and a headless mount (no host row)
+        # throws here. Drop this key to take the preset to a host without it.
         modelSelectionSettings: true
         backgroundMode: continuable
 
@@ -385,6 +432,10 @@
       config:
         provider: fork
         toolName: subagent_fork
+        # Deliberately NO modelSelectionSettings: fork keeps the parent's exact
+        # provider/model so the inherited prefix stays KV-cache eligible, and
+        # `list_subagent_models` is a global tool name — only ONE instance per
+        # scope may own model selection.
         backgroundMode: continuable
 
     # Product providers are host-plane singletons. Copy this preset, then

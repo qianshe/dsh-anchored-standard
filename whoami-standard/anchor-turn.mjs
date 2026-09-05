@@ -23,6 +23,8 @@
  * so the anchor is never re-injected.
  */
 
+import { sessionEvents } from './compaction-epoch.mjs'
+
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'anchor-turn'
 
@@ -32,7 +34,7 @@ export const ANCHOR_TEXT = 'This round is a test. Tools are not open yet; all to
 /** Fresh sessions (no prior user message) get the anchor turn. */
 function isFreshSession(agent, includeSubagents = false) {
   if (!includeSubagents && (agent.session.header.delegationDepth ?? 0) > 0) return false
-  return !agent.session.events.some((event) => event.type === 'user/message')
+  return !sessionEvents(agent.session).some((event) => event.type === 'user/message')
 }
 
 /** Register the first-message anchor injection. */

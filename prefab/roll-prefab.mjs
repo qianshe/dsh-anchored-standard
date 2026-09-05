@@ -116,6 +116,10 @@ const runnerName = `prefab-roll-runner-${runToken}.mjs`
 const runnerFile = join(PROFILE_DIR, runnerName)
 const patchFile = join(PROFILE_DIR, `prefab-roll-${runToken}.yml`)
 copyFileSync(join(HERE, 'roll-runner.mjs'), runnerFile)
+// The runner reads the durable log through the shared compat layer
+// (`./compaction-epoch.mjs`): the profile dir is not a package directory, so
+// the sidecar must travel with the copied runner or the run dies at import.
+copyFileSync(join(HERE, 'compaction-epoch.mjs'), join(PROFILE_DIR, 'compaction-epoch.mjs'))
 
 let template = null
 try {
@@ -128,6 +132,14 @@ try {
   disabled: true
 
 - insert:
+    # The anchored presets carry a modelSelectionSettings delegation row, which
+    # resolves the "subagentModelSelection" service in HOST scope. The web bundle
+    # ships that row; the headless bundle does not, so an unmodified headless
+    # mount throws "requires .../model-selection-settings in the Host scope".
+    # Add it here so headless verification composes what web actually runs.
+    - id: subagent-model-selection-settings
+      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
+
     - id: agent-presets
       name: '@deepseek-ai/dsh-agent-presets'
       config:
@@ -178,6 +190,7 @@ try {
 } finally {
   rmSync(patchFile, { force: true })
   rmSync(runnerFile, { force: true })
+  rmSync(join(PROFILE_DIR, 'compaction-epoch.mjs'), { force: true })
 }
 
 if (template === null) {

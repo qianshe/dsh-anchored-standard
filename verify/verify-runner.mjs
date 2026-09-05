@@ -30,6 +30,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createFirstAssistantCanceller } from './first-assistant-canceller.mjs'
+import { sessionEvents } from './compaction-epoch.mjs'
 
 /** Stable Cordis plugin name. */
 export const name = 'verify-runner'
@@ -123,11 +124,11 @@ async function run(ctx, config, io) {
   out.push(`sessionId: ${agent.session.id}`)
   out.push(`preset: ${config.preset}`)
   out.push(`cwd: ${config.cwd}`)
-  for (const event of agent.session.events) {
+  for (const event of sessionEvents(agent.session)) {
     if (event.type !== 'request/header') continue
     out.push(`request/header [${event.data.reason}] ${headerLine(event.data.header)}`)
   }
-  const firstAssistant = agent.session.events.find((event) => event.type === 'assistant/message' && event.seq >= firstSeq)
+  const firstAssistant = sessionEvents(agent.session).find((event) => event.type === 'assistant/message' && event.seq >= firstSeq)
   if (firstAssistant === undefined) {
     out.push('(no assistant/message recorded)')
   } else {
@@ -141,14 +142,14 @@ async function run(ctx, config, io) {
   }
   // Which user-message sources reached the first step: the bootstrap strip
   // removes agent-instructions and skill-catalog until promotion.
-  const beforeAssistant = agent.session.events.filter(
+  const beforeAssistant = sessionEvents(agent.session).filter(
     (event) => event.seq >= firstSeq && event.seq < (firstAssistant?.seq ?? Number.POSITIVE_INFINITY),
   )
   const userSources = beforeAssistant
     .filter((event) => event.type === 'user/message')
     .map((event) => event.data.message?.source?.kind ?? 'unknown')
   out.push(`first-step user message sources: ${JSON.stringify(userSources)}`)
-  const turnEnd = [...agent.session.events].reverse().find((event) => event.type === 'turn/end')
+  const turnEnd = [...sessionEvents(agent.session)].reverse().find((event) => event.type === 'turn/end')
   out.push(`turn/end: ${JSON.stringify(turnEnd?.data?.reason ?? null)}`)
   io.stdout.write(out.join('\n') + '\n')
   io.exit(0)

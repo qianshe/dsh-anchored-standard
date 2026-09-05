@@ -22,6 +22,50 @@
  * sessions.
  */
 
+/**
+ * Session event-log read compat layer (host 0.1.2 adaptation).
+ *
+ * host 0.1.2-rc.1 removed the `Session.events` getter in favor of
+ * `snapshotEvents(fromSeq?, toSeqExclusive?)` / `ownEvents()` / `eventAt(seq)`.
+ * Reading `session.events` now yields `undefined`, which used to surface as
+ * "Cannot read properties of undefined" — or worse, as the SILENT failures
+ * this preset family guarded with `Array.isArray(session.events)` (those
+ * guards made every phase decision default to "no history": promotion never
+ * fired, explicitly unlocked tools were forgotten every turn).
+ *
+ * Resolution order: `snapshotEvents()` (new host, full log — exactly what the
+ * old getter returned) → `events` (old host) → `ownEvents()` (fork-aware
+ * fallback). Any failure degrades to an empty array with a one-time warn,
+ * so one drifted read never takes down prompt assembly.
+ */
+export function sessionEvents(session) {
+  if (session === undefined || session === null) return []
+  try {
+    if (typeof session.snapshotEvents === 'function') {
+      const snap = session.snapshotEvents()
+      if (Array.isArray(snap)) return snap
+    }
+    if (Array.isArray(session.events)) return session.events
+    if (typeof session.ownEvents === 'function') {
+      const own = session.ownEvents()
+      if (Array.isArray(own)) return own
+    }
+  } catch { /* unreadable log degrades to "no history" */ }
+  warnOnceNoEvents(session)
+  return []
+}
+
+let warnedNoEvents = false
+function warnOnceNoEvents(session) {
+  if (warnedNoEvents) return
+  warnedNoEvents = true
+  try {
+    console.warn('[compaction-epoch] session event log unavailable (host API drift?) — session id: '
+      + String(session?.id ?? 'unknown')
+      + '; promotion/unlock detection degrades to "no history"')
+  } catch { /* console unavailable — non-fatal */ }
+}
+
 /** Build one epoch-aware promotion tracker. */
 export function createEpochPromotion(promoteEvents, options = {}) {
   const includeSubagents = options.includeSubagents === true
@@ -33,7 +77,7 @@ export function createEpochPromotion(promoteEvents, options = {}) {
   const scan = (session) => {
     let boundary = -1
     let promoted = false
-    for (const event of session.events) {
+    for (const event of sessionEvents(session)) {
       const seq = event.seq ?? 0 // events without a seq are treated as post-boundary
       if (event.type === 'compaction/end') {
         boundary = seq
