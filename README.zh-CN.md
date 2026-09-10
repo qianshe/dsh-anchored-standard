@@ -8,24 +8,44 @@
 
 这是社区项目，并非 DeepSeek 官方 preset，也不代表 DeepSeek 的认可或背书。
 
-欢迎您将插件的使用反馈以Issue或PR的形式进行提交,对于新插件的思路或有用的发现请在[仓库](https://github.com/0liveiraaa/DeepseekCotexplorations)下提交。
+本项目已冻结，不再接受新的 issue 与 PR（见[项目状态](#项目状态2026-09-10-冻结)）。对于新插件的思路或有用的发现，请在[研究仓库](https://github.com/0liveiraaa/DeepseekCotexplorations)下提交。
 
-## 项目状态（2026-08-17）
+## 项目状态（2026-09-10 冻结）
 
-随着 DeepSeek 官方 API 与 opencode go 订阅先后涨价，本项目的主动开发已基本停止：
-这些 preset 依赖的评测循环（Project2 级别的完整跑分、多轮 roll/探针实验）在当前
-价格下已无法负担。仓库维持现状可用，仅接受**维护性更新**（bug 修复与力所能及的
-harness 兼容性跟进）。机制结论、剂量实验数据与工具链（context-gate、prefab 管线、
-探针套件）仍然有效，且基本与模型无关。维护者写了一份个人感想：
-[FAREWELL.md](./FAREWELL.md)；参与项目协作、代码、研究与复现的社区成员见
-[致谢名单](./ACKNOWLEDGEMENTS.md)。
+**本项目已冻结。** 2026-09-10 DeepSeek 发布 V4.1 Flash，并宣布 V4 Pro——这些 preset
+测量与调优所面向的模型——于 2026-09-14 12:00 下线，其请求全部路由至 V4.1 Flash。这些
+preset 存在的意义是把一条轨迹重新锚回来，而继任模型看起来并不需要这个补丁：第一轮
+剂量实验中，flash 家族在所有条件下都锚定成功（32/32），这也是本项目从未针对 flash
+调优的原因。但 V4.1 Flash 自身的首轮轨迹**并未测量**（维护期没有 API 预算），请把上面
+这一点当作基于旧 flash 数据的推断，而非结论。既然这项工作所围绕的模型即将消失，维护期
+到此结束。**不再接受、也不再处理新的 issue 与 PR。** 仓库保持在线，历史、数据与致谢
+记录原样保留。
 
-社区中反馈在部分场景效果更好的项目：
+这正是 [`FAREWELL.md`](./FAREWELL.md) 里期待过的结局："希望下次端上来的新模型，在训练
+阶段就把更多样的 harness 环境吃进去，让我们这类补丁工程不再必要。"那一篇的最后，现在
+由接班的那一代模型 V4.1 Flash 亲笔写下了收尾。仍然有效的是与模型无关的那部分——
+`context-gate` 统一注入控制、prefab 管线、发现工具的剂量-响应数据，以及"API 可见的表面
+会条件化轨迹"这一普遍观察。研究材料继续在研究仓库
+[DeepseekCotexplorations](https://github.com/0liveiraaa/DeepseekCotexplorations) 开放。
+
+此前状态（2026-08-17，存档）：随着 DeepSeek 官方 API 与 opencode go 订阅先后涨价，本项目
+的主动开发已基本停止——这些 preset 依赖的评测循环（Project2 级别的完整跑分、多轮
+roll/探针实验）在当前价格下已无法负担，仓库转入**仅维护性更新**（bug 修复与力所能及的
+harness 兼容性跟进）。维护者写了一份个人感想：[FAREWELL.md](./FAREWELL.md)；参与项目
+协作、代码、研究与复现的社区成员见[致谢名单](./ACKNOWLEDGEMENTS.md)。
+
+社区中反馈在部分场景效果更好的项目，以及围绕这些 preset 的生态工具：
 
 - [dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite)——运行时注入器
   + 任务感知的思维模式路由 preset（router-standard 家族）。
 - [J-Space Cognition Suite](https://github.com/Tiger3807861189/J-Space-Cognition-Suite-V3.6)——
   模型不可知的推理时认知控制层，以 Skill 形式封装。
+- [both-anchored (auto-b7n)](https://github.com/0liveiraaa/DeepseekCotexplorations/tree/main/contributions/andyzheng0715-v4pro-anchored-both/)——
+  社区独立发展的两阶段锚定 preset：无首轮输出帽、无晋升门，首个持久 `tool/call` 或
+  `assistant/message` 即晋升，晋升后以 wire 裁剪保持完整 PTC SDK（#85 反馈与实验数据随
+  研究仓库收录，样本量与边界声明见原贡献）。
+- [dsh-recovery](https://github.com/AndyZHENG0715/dsh-recovery)——零依赖的自愈 CLI +
+  watchdog 插件：坏预设隔离/回滚、安全模式白名单与启动探测。
 
 ## 模式总览
 
@@ -276,6 +296,22 @@ prefab/                  Prefab Anchored Standard + 内置会话模板
 - DeepSeek Harness `0.1.0-rc.5`
 - 仓库提交 [`47f9438`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)
 - Windows / Node.js 24
+
+DeepSeek Harness `0.1.3-alpha.1` 移除了公开的 `session.events` 数组，改为
+`session.snapshotEvents()`（冻结副本，缓存随每次 append 失效）。自 PR
+[#88](https://github.com/xiaobright/dsh-anchored-standard/pull/88) 起，所有
+历史扫描优先使用 `snapshotEvents()`，并在旧版上回退到 `session.events`，因此
+preset 在新旧 harness 上都能加载。验证方式为对照 `0.1.3-alpha.1` 源码（插件
+触及的 session API 面 + 插件钩子名）与 mock 测试套件，未在该构建上实机运行。
+
+DeepSeek Harness `0.1.3-alpha.2` 把 `dsh-persona` 行的 `text` 键换成了必填的
+`prefix`（另有可选 `suffix`），于是每个模式的 preset 都挂载失败，报
+`invalid config: $.prefix missing required value`。自 PR
+[#90](https://github.com/xiaobright/dsh-anchored-standard/pull/90) 起，persona
+行改用 `prefix:`——persona 文本本身未动（仍与官方 0.1.3 `minimal` 的 persona
+行逐字节一致），字节纯净的 Minimal 锚定条件不受影响。**这一段是单向迁移**：
+同一行不能同时写两个键（未知键会在挂载时报错），因此在 dsh `0.1.3-alpha.1`
+及更早版本上必须把 `text:` 改回来——每个模式目录改一行，或使用 #90 之前的提交。
 
 持久 shell 的 `shellPath` 按环境自适应：`/bin/bash` 存在的传统主机保持
 terminal-bash 插件的默认行为不变；仅当该绝对路径不存在（如 NixOS，bash

@@ -30,6 +30,8 @@
 - [@gwL955](https://github.com/gwL955)——以真实会话日志定位 dev_tool_search 全 token AND 匹配导致长查询必然空结果、模型只搜不解锁的双重缺陷，给出模糊打分排序与解锁路径教学的修复及回归测试（[#80](https://github.com/xiaobright/dsh-anchored-standard/pull/80)，在 [#31](https://github.com/xiaobright/dsh-anchored-standard/pull/31)、[#32](https://github.com/xiaobright/dsh-anchored-standard/issues/32) 的基础上推进）。
 - [@mbzmr](https://github.com/mbzmr)——以修复前后的完整 session 导出证据复现极简 persona 下的身份漂移（自称 Claude），验证一行身份句配方不影响任何机械锚定指标，并按 #49/#63 的证据标准将其记录为 README 已知行为（[#81](https://github.com/xiaobright/dsh-anchored-standard/issues/81)、[#82](https://github.com/xiaobright/dsh-anchored-standard/pull/82)）。
 - [@heiheiha798](https://github.com/heiheiha798)——将 7 个 preset 的 subagent 委派配置逐行对齐 dsh 0.1.2-alpha.3 官方 standard preset（`modelSelectionSettings` 与 `backgroundMode` 迁移），并在 `dev_tool_search` 可解锁目录中收录 `list_subagent_models`（[#87](https://github.com/xiaobright/dsh-anchored-standard/pull/87)）。
+- [@324641aliyun](https://github.com/324641aliyun)——针对 dsh 0.1.3-alpha.1 移除公开 `session.events` 的破坏性变更，把全部 7 个模式与 verify 助手的历史扫描统一改为优先 `session.snapshotEvents()` 并回退 `session.events`，恢复新版 harness 下的预填充与上下文注入（[#88](https://github.com/xiaobright/dsh-anchored-standard/pull/88)）。
+- [@Vladimir-Human](https://github.com/Vladimir-Human)——报告并修复 dsh 0.1.3-alpha.2 上 `dsh-persona` 行 `text` 被必填 `prefix` 取代导致的挂载与会话恢复失败：定位 schema 变更、给出逐行修复并核对官方 minimal persona 行，7 个模式目录统一迁移且 persona 文本保持逐字节不变（[#89](https://github.com/xiaobright/dsh-anchored-standard/issues/89)、[#90](https://github.com/xiaobright/dsh-anchored-standard/pull/90)）。
 
 ## 研究与独立复现
 
@@ -44,4 +46,4 @@
 
 完整记录可在 [Contributors](https://github.com/xiaobright/dsh-anchored-standard/graphs/contributors)、[Pull Requests](https://github.com/xiaobright/dsh-anchored-standard/pulls?q=is%3Apr) 和 [Issues](https://github.com/xiaobright/dsh-anchored-standard/issues?q=is%3Aissue) 中查阅；实验材料与研究贡献见 [DeepseekCotexplorations](https://github.com/0liveiraaa/DeepseekCotexplorations)。
 
-> 统计截至 2026-09-01：主仓库共有 26 个已合并 PR，其中包括 18 位外部 PR 作者；此外还有通过协作分支、审查合并和研究仓库参与项目的贡献者。GitHub 账号与本地 Git 作者邮箱的映射可能造成贡献计数差异，因此这里以可核验的实际贡献内容为主，而不是按 commit 数量排序。
+> 统计截至 2026-09-08：主仓库共有 28 个已合并 PR，其中包括 20 位外部 PR 作者；此外还有通过协作分支、审查合并和研究仓库参与项目的贡献者。GitHub 账号与本地 Git 作者邮箱的映射可能造成贡献计数差异，因此这里以可核验的实际贡献内容为主，而不是按 commit 数量排序。

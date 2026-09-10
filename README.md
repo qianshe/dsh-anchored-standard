@@ -12,26 +12,58 @@ on demand.
 This is a community project. It is not an official DeepSeek preset and is not
 affiliated with or endorsed by DeepSeek.
 
-Feel free to submit feedback on the plugin in the form of Issues or PRs. For ideas for new plugins or useful findings, please submit them under the [repository](https://github.com/0liveiraaa/DeepseekCotexplorations).
+The project is frozen — new issues and pull requests are no longer accepted (see
+[Project status](#project-status-frozen-2026-09-10)). For ideas for new plugins or useful
+findings, please submit them under the
+[repository](https://github.com/0liveiraaa/DeepseekCotexplorations).
 
-## Project status (2026-08-17)
+## Project status (frozen 2026-09-10)
 
-Following the price increases on both the DeepSeek official API and the opencode go
-subscription, active development of this project has effectively stopped: the evaluation
-loops these presets depend on (Project2-class runs and multi-trial roll/probe experiments)
-are no longer affordable. The repository stays available as-is and receives **maintenance
-only** (bug fixes and harness-compatibility updates when feasible). The mechanism findings,
-the dose-response data, and the tooling (context-gate, the prefab pipeline, the probe
-suite) remain valid and are largely model-agnostic. A personal note from the maintainer:
-[FAREWELL.md](./FAREWELL.md) (Chinese). Contributors and collaborators are
-listed in [ACKNOWLEDGEMENTS.md](./ACKNOWLEDGEMENTS.md).
+**This project is frozen.** On 2026-09-10 DeepSeek released V4.1 Flash and announced that
+V4 Pro — the model these presets were measured on and tuned for — is retired on
+2026-09-14 12:00, with its traffic routed to V4.1 Flash. The presets exist to re-anchor a
+trajectory that the successor does not appear to need patched: the flash family anchored
+under every condition in our first-round dose-response probes (32/32), which is why the
+project never tuned for it. V4.1 Flash's own first-round trajectory has NOT been measured
+(no API budget in maintenance mode), so treat that as an inference from the earlier
+flash data, not a result. The model the work was built around is going away, so the
+maintenance period ends here. **New issues and pull requests are no longer accepted or
+handled.** The repository stays online with its history, data and acknowledgement record
+intact.
 
-Community projects that users report perform better in some scenarios:
+This is the ending [`FAREWELL.md`](./FAREWELL.md) asked for: "let the next model eat more
+diverse harness environments during training, so that patch engineering like this is no
+longer necessary." That file now ends with a closing note written by the successor model
+itself, V4.1 Flash. What stays valid is the model-agnostic part — the `context-gate`
+unified injection control, the prefab pipeline, the discovery-tool dose-response data, and
+the general observation that the API-visible surface conditions the trajectory. Research
+material remains open in
+[DeepseekCotexplorations](https://github.com/0liveiraaa/DeepseekCotexplorations).
+
+Earlier status (2026-08-17, kept for the record): following the price increases on both the
+DeepSeek official API and the opencode go subscription, active development had already
+stopped — the evaluation loops these presets depend on (Project2-class runs and multi-trial
+roll/probe experiments) were no longer affordable, leaving the repository in **maintenance
+only** mode (bug fixes and harness-compatibility updates when feasible). A personal note
+from the maintainer: [FAREWELL.md](./FAREWELL.md) (Chinese). Contributors and collaborators
+are listed in [ACKNOWLEDGEMENTS.md](./ACKNOWLEDGEMENTS.md).
+
+Community projects that users report perform better in some scenarios, plus
+ecosystem tooling built around these presets:
 
 - [dsh-routing-suite](https://github.com/yjh051108/dsh-routing-suite) — a runtime injector
   plus task-aware thinking-mode routing presets (the router-standard family).
 - [J-Space Cognition Suite](https://github.com/Tiger3807861189/J-Space-Cognition-Suite-V3.6)
   — a model-agnostic inference-time cognitive control layer packaged as a Skill.
+- [both-anchored (auto-b7n)](https://github.com/0liveiraaa/DeepseekCotexplorations/tree/main/contributions/andyzheng0715-v4pro-anchored-both/) —
+  an independently developed two-phase anchored preset: no first-request output
+  cap, no promotion gate, promotion on the first durable `tool/call` or
+  `assistant/message`, with the full PTC SDK kept intact via post-promotion wire
+  trimming (the #85 feedback and experiment data live in the research repository,
+  with sample sizes and boundary caveats stated in the original contribution).
+- [dsh-recovery](https://github.com/AndyZHENG0715/dsh-recovery) — a zero-dependency
+  self-healing CLI plus watchdog plugin: broken-preset quarantine/rollback,
+  safe-mode whitelists, and boot probes.
 
 ## Modes at a glance
 
@@ -326,6 +358,26 @@ Developed and tested against:
 - DeepSeek Harness `0.1.0-rc.5`
 - repository commit [`47f9438`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a)
 - Node.js 24 on Windows
+
+DeepSeek Harness `0.1.3-alpha.1` removed the public `session.events` array in
+favor of `session.snapshotEvents()` (a frozen copy whose cache is invalidated on
+every append). Since PR
+[#88](https://github.com/xiaobright/dsh-anchored-standard/pull/88) every
+history scan prefers `snapshotEvents()` and falls back to `session.events`, so
+the presets load on both old and new harness builds. Verified against the
+`0.1.3-alpha.1` source (the session API surface the plugins touch, plus the
+plugin hook names) and by the mock suite; not by live runs on that build.
+
+DeepSeek Harness `0.1.3-alpha.2` replaced the `dsh-persona` row's `text` key
+with a required `prefix` (plus an optional `suffix`), so every mode's preset
+failed to mount with `invalid config: $.prefix missing required value`. Since PR
+[#90](https://github.com/xiaobright/dsh-anchored-standard/pull/90) the persona
+rows use `prefix:` — the persona TEXT is unchanged (it still matches the
+official 0.1.3 `minimal` persona row byte-for-byte), so the byte-pure Minimal
+anchor condition is unaffected. **This part is a one-way migration:** a preset
+row cannot carry both keys (unknown keys fail at mount), so on dsh
+`0.1.3-alpha.1` and older the persona row must use `text:` again — change that
+one line per mode directory, or use the commit before #90.
 
 The persistent shell resolves `shellPath` adaptively: it keeps the
 terminal-bash plugin default `/bin/bash` on hosts where that absolute path
