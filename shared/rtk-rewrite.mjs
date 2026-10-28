@@ -58,6 +58,14 @@ const MAX_CACHE_ENTRIES = 256
 const REWRITE_EXIT_CODES = new Set([0, 3])
 
 /**
+ * Marks a definition THIS plugin registered, so a reconcile can tell its own
+ * shadow from a base another row re-registered under the same name. A symbol
+ * (not a string key) keeps the marker out of schemas, serialization and any
+ * `Object.keys` walk the registry performs on a tool definition.
+ */
+const SHADOW = Symbol.for('dsh-rtk-rewrite/shadow')
+
+/**
  * What a shell prints when `rtk` ITSELF is missing from the tool's PATH.
  *
  * The plugin resolves the binary from the harness process, but the tool's own
@@ -209,7 +217,7 @@ export function apply(ctx, config = {}) {
 
   /** Agents seen under this composition (so a late `bash` row can still be wrapped). */
   const seen = new Set()
-  /** agent → the fiber that owns its scoped registrations. */
+  /** agent -> { fiber, wrapped: Map<toolName, baseDefinition>, observed: Set<toolName> }. */
   const installs = new Map()
   /** Re-entrancy guard: our own registration emits `tools/change` synchronously. */
   const installing = new Set()
@@ -218,55 +226,102 @@ export function apply(ctx, config = {}) {
   /** Consecutive exit-127 answers; any other rewritten answer clears it. */
   let missingStrikes = 0
 
+  /**
+   * The definitions that still need a shadow.
+   *
+   * `ctx.tools.get` is the only authority on what the model would actually run,
+   * so this is also what notices a shadow that went AWAY: a scoped layer can be
+   * torn down without telling us (a recompose, a re-registered `bash` row, a
+   * re-keyed scope), and a lost shadow is completely silent — bash keeps
+   * working, RTK just never gets asked again (observed: rewriting died four
+   * minutes into a session and stayed dead).
+   *
+   * `wrapped` covers registries that resolve THROUGH their own layers: when
+   * `get` never surfaces a scoped shadow at all, the base we wrapped is still
+   * the base, and re-registering every step would be a loop, not a repair.
+   */
+  const unwrapped = (agent) => {
+    const state = installs.get(agent)
+    const targets = []
+    for (const toolName of toolNames) {
+      // Resolve the baseline as THIS agent sees it: the persistent shell on
+      // POSIX, custom-bash on Windows, whatever the preset composed.
+      const base = ctx.tools.get(toolName, agent)
+      if (base === undefined || base === null) continue
+      if (base[SHADOW] === true) {
+        // Our shadow is the effective definition: nothing to do, and a later
+        // disappearance of it is now distinguishable from a registry that
+        // simply never surfaced it.
+        state?.observed.add(toolName)
+        continue
+      }
+      // Same base we already wrapped, and the registry has never shown our
+      // shadow for this tool: a registry that resolves through its own layers.
+      if (state !== undefined && state.wrapped.get(toolName) === base && !state.observed.has(toolName)) continue
+      targets.push([toolName, base])
+    }
+    return targets
+  }
+
   const install = (agent) => {
     if (agent === undefined || agent === null) return
-    if (installs.has(agent) || installing.has(agent)) return
+    if (installing.has(agent)) return
     installing.add(agent)
     try {
-      const targets = []
-      for (const toolName of toolNames) {
-        // Resolve the baseline as THIS agent sees it: the persistent shell on
-        // POSIX, custom-bash on Windows, whatever the preset composed.
-        const base = ctx.tools.get(toolName, agent)
-        if (base !== undefined) targets.push([toolName, base])
-      }
+      const targets = unwrapped(agent)
       if (targets.length === 0) return
+      const previous = installs.get(agent)
+      installs.delete(agent)
+      if (previous !== undefined) {
+        try {
+          previous.fiber?.dispose?.()
+        } catch {
+          // A fiber that is already gone has nothing to release.
+        }
+      }
       const fiber = agent.ctx.inject(['tools'], (scoped) => {
         for (const [, base] of targets) {
           scoped.tools.register({
             ...base,
+            [SHADOW]: true,
             async execute(args, exec) {
               const command = args !== null && typeof args === 'object' ? args.command : undefined
               if (disabled || !shouldRewrite(command)) return base.execute(args, exec)
+              let rewritten
               try {
-                const rewritten = await rewrite(command, exec?.signal)
-                if (rewritten === null || rewritten === undefined) return base.execute(args, exec)
-                // The shell — not this plugin — runs `rtk <cmd>`, so cwd,
-                // env, PATH, sandbox and PTY are exactly the original ones.
-                const result = await base.execute({ ...args, command: rewritten }, exec)
-                const text = outputText(result)
-                if (EXIT_127.test(text) && SHELL_RTK_MISSING.test(text)) {
-                  // Exit 127 means nothing ran: re-running the original is safe.
-                  // Two consecutive answers disable rewriting for the process, so
-                  // a misconfigured PATH degrades to plain bash instead of
-                  // failing every filtered call.
-                  missingStrikes += 1
-                  if (missingStrikes >= MISSING_STRIKES_TO_DISABLE && !disabled) {
-                    disabled = true
-                    ctx.logger?.warn?.('rtk-rewrite: the tool shell cannot find `rtk` — rewriting disabled, commands run unmodified')
-                  }
-                  return base.execute(args, exec)
-                }
-                missingStrikes = 0
-                return result
+                rewritten = await rewrite(command, exec?.signal)
               } catch {
+                rewritten = null
+              }
+              if (rewritten === null || rewritten === undefined) return base.execute(args, exec)
+              // The shell — not this plugin — runs `rtk <cmd>`, so cwd, env,
+              // PATH, sandbox and PTY are exactly the original ones.
+              //
+              // Deliberately OUTSIDE the guard above: an error thrown here
+              // belongs to the tool body (a spawn failure, a cancellation), and
+              // re-running the original command would execute it twice.
+              const result = await base.execute({ ...args, command: rewritten }, exec)
+              const text = outputText(result)
+              if (EXIT_127.test(text) && SHELL_RTK_MISSING.test(text)) {
+                // Exit 127 means nothing ran: re-running the original is safe.
+                // Two consecutive answers disable rewriting for the process, so
+                // a misconfigured PATH degrades to plain bash instead of
+                // failing every filtered call.
+                missingStrikes += 1
+                if (missingStrikes >= MISSING_STRIKES_TO_DISABLE && !disabled) {
+                  disabled = true
+                  const proof = SHELL_RTK_MISSING.exec(text)?.[0] ?? ''
+                  ctx.logger?.warn?.(`rtk-rewrite: the tool shell cannot find \`rtk\` (${proof}) — rewriting disabled, commands run unmodified`)
+                }
                 return base.execute(args, exec)
               }
+              missingStrikes = 0
+              return result
             },
           })
         }
       })
-      installs.set(agent, fiber)
+      installs.set(agent, { fiber, wrapped: new Map(targets), observed: new Set() })
     } finally {
       installing.delete(agent)
     }
@@ -281,10 +336,21 @@ export function apply(ctx, config = {}) {
   ctx.on('tools/change', () => {
     for (const agent of seen) install(agent)
   })
+  // A registry that drops our scoped layer emits nothing we can hook: the
+  // shadow just stops being the definition the agent sees. Re-checking on each
+  // status change costs a few map lookups and repairs a lost shadow inside the
+  // very step it went missing in.
+  ctx.on('agent/status', ({ agent }) => {
+    try {
+      install(agent)
+    } catch {
+      // A reconcile must never disturb the step it rides on.
+    }
+  })
   ctx.on('agent/disposed', ({ agent }) => {
     seen.delete(agent)
-    const fiber = installs.get(agent)
+    const state = installs.get(agent)
     installs.delete(agent)
-    if (fiber !== undefined && typeof fiber.dispose === 'function') void fiber.dispose()
+    if (state !== undefined && typeof state.fiber?.dispose === 'function') void state.fiber.dispose()
   })
 }

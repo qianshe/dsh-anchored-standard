@@ -300,6 +300,9 @@ test('two consecutive shell-level 127 answers disable rewriting for the process'
   // Second 127: now disabling, still re-running the original.
   assert.equal(await agentCall(shadow, { command: 'git status', description: 'x' }), 'ran:git status')
   assert.match(warns.at(-1), /cannot find `rtk`/)
+  // The warning has to name the proof: a silent "rewriting is off" is what
+  // cost a whole debugging session.
+  assert.match(warns.at(-1), /rtk: command not found/)
 
   // Later calls never ask RTK again (the first two shared one cached rewrite).
   assert.equal(await agentCall(shadow, { command: 'ls -la', description: 'x' }), 'ran:ls -la')
@@ -340,4 +343,97 @@ test('the real binary rewrites a supported command (opt-in RTK_BIN)', { skip: !p
   assert.equal(await rewrite('echo hello'), null)
   const rewritten = await rewrite('git status')
   assert.match(rewritten ?? '', /^rtk git status$/)
+})
+/** A fake registry that resolves the definition the agent would actually run. */
+function registry(base) {
+  let live = base
+  return {
+    get: () => live,
+    adopt: (shadow) => { live = shadow },
+    drop: () => { live = base },
+    replace: (next) => { live = next },
+  }
+}
+
+test('apply re-wraps a base that was re-registered under the same name', async () => {
+  const first = baseBash()
+  const second = baseBash()
+  const tools = registry(first.definition)
+  const { start, registered, fire, makeAgent } = harness({
+    base: first.definition,
+    tools: () => tools.get(),
+    exec: fakeExec({ code: 3, stdout: 'rtk git status' }),
+  })
+  start()
+  fire('agent/created', { agent: makeAgent('a') })
+  tools.adopt(registered[0])
+  assert.equal(registered.length, 1)
+
+  // A recompose swaps the shell row: the definition the agent resolves is a
+  // different object, so the old shadow no longer wraps anything.
+  tools.replace(second.definition)
+  fire('tools/change', {})
+  assert.equal(registered.length, 2)
+
+  tools.adopt(registered[1])
+  assert.equal(await agentCall(registered[1], { command: 'git status' }), 'ran:rtk git status')
+  assert.deepEqual(second.calls.at(-1), { command: 'rtk git status' })
+})
+
+test('apply re-registers a shadow that disappeared between steps', async () => {
+  const base = baseBash()
+  const tools = registry(base.definition)
+  const { start, registered, fire, makeAgent } = harness({
+    base: base.definition,
+    tools: () => tools.get(),
+    exec: fakeExec({ code: 3, stdout: 'rtk ls' }),
+  })
+  start()
+  const agent = makeAgent('a')
+  fire('agent/created', { agent })
+  tools.adopt(registered[0])
+  fire('agent/status', { agent })
+  assert.equal(registered.length, 1, 'a live shadow is left alone')
+
+  // The scoped layer is torn down without an event we can hook: bash keeps
+  // working, RTK would never be asked again.
+  tools.drop()
+  fire('agent/status', { agent })
+  assert.equal(registered.length, 2)
+
+  tools.adopt(registered[1])
+  assert.equal(await agentCall(registered[1], { command: 'ls' }), 'ran:rtk ls')
+})
+
+test('apply leaves a registry that never surfaces scoped shadows alone', () => {
+  const base = baseBash()
+  const { start, registered, fire, makeAgent } = harness({ base: base.definition })
+  start()
+  const agent = makeAgent('a')
+  fire('agent/created', { agent })
+  for (let step = 0; step < 5; step += 1) fire('agent/status', { agent })
+  // `get` kept resolving the base we already wrapped: re-registering on every
+  // status change would be a leak, not a repair.
+  assert.equal(registered.length, 1)
+})
+
+test('apply never re-runs the command when the tool body throws', async () => {
+  const seen = []
+  const failing = {
+    ...baseBash().definition,
+    async execute(args) {
+      seen.push(args.command)
+      if (args.command.startsWith('rtk ')) throw new Error('spawn failed')
+      return `ran:${args.command}`
+    },
+  }
+  const { start, registered, fire, makeAgent } = harness({
+    base: failing,
+    exec: fakeExec({ code: 3, stdout: 'rtk git status' }),
+  })
+  start()
+  fire('agent/created', { agent: makeAgent('a') })
+  await assert.rejects(() => agentCall(registered[0], { command: 'git status' }), /spawn failed/)
+  // Falling back here would execute the command a second time.
+  assert.deepEqual(seen, ['rtk git status'])
 })
