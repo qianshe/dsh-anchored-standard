@@ -145,6 +145,71 @@ export function shouldRewrite(command, env = process.env) {
 }
 
 /**
+ * `cd <absolute> && <one command>` -> `{ command, workdir }`, or null.
+ *
+ * The prefix is pure overhead: bash already starts in the workspace root, and a
+ * compound command only gets its LAST segment rewritten by `rtk rewrite`.
+ * Normalizing it into the tool's own `workdir` keeps the executed command
+ * simple and its result paths relative. Only a literal absolute target with one
+ * trailing command qualifies - variables, `~`, further separators, heredocs and
+ * command substitution are left exactly as written.
+ *
+ * @param {unknown} command - the model's `command` argument.
+ * @returns {{ command: string, workdir: string } | null}
+ */
+export function extractCd(command) {
+  if (typeof command !== 'string') return null
+  const match = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s*&&\s*([\s\S]+?)\s*$/.exec(command)
+  if (match === null) return null
+  const target = match[1] ?? match[2] ?? match[3]
+  const rest = match[4]
+  if (target === undefined || rest === undefined || rest === '') return null
+  if (!/^(?:[A-Za-z]:[\\/]|\/)/.test(target)) return null
+  if (/[;&`]|\|\||\$\(|\n|<</.test(rest)) return null
+  if (/^cd\s/.test(rest)) return null
+  return { command: rest, workdir: target }
+}
+
+/**
+ * Whether the baseline definition exposes a `workdir` parameter.
+ *
+ * `parameters` has two shapes in this harness: `defineTool`'s flat spec
+ * (`{ command: {...}, workdir: {...} }`) and a raw JSON Schema
+ * (`{ type: 'object', properties: {...} }`, what custom-bash registers).
+ */
+function acceptsWorkdir(base) {
+  const parameters = base?.parameters
+  if (parameters === null || typeof parameters !== 'object') return false
+  const properties = parameters.type === 'object' && typeof parameters.properties === 'object'
+    ? parameters.properties
+    : parameters
+  return properties.workdir !== undefined
+}
+
+/**
+ * Rewrite `cd <abs> && <cmd>` into `{ ...args, command, workdir }`, or null.
+ *
+ * Only definitions that DECLARE `workdir` are normalized: the POSIX persistent
+ * shell has no such parameter, and injecting an unknown field there would run
+ * the command in the session directory instead of the requested one.
+ *
+ * @param {any} base - the baseline tool definition the shadow wraps.
+ * @param {any} args - the model's arguments.
+ * @returns {{ args: Record<string, unknown>, command: string } | null}
+ */
+export function normalizeCd(base, args) {
+  if (args === null || typeof args !== 'object') return null
+  if (args.workdir !== undefined) return null
+  if (!acceptsWorkdir(base)) return null
+  const extracted = extractCd(args.command)
+  if (extracted === null) return null
+  return {
+    args: { ...args, command: extracted.command, workdir: extracted.workdir },
+    command: extracted.command,
+  }
+}
+
+/**
  * Build the rewrite function: `(command, signal) → rewritten | null`.
  *
  * `exec` is injectable so the test suite can drive every exit code without the
@@ -287,20 +352,26 @@ export function apply(ctx, config = {}) {
             async execute(args, exec) {
               const command = args !== null && typeof args === 'object' ? args.command : undefined
               if (disabled || !shouldRewrite(command)) return base.execute(args, exec)
+              // Move a literal `cd <abs> &&` prefix into the tool's own
+              // `workdir` so RTK sees a single command (and result paths stay
+              // relative). Definitions without a `workdir` parameter are untouched.
+              const normalized = normalizeCd(base, args)
+              const effectiveArgs = normalized === null ? args : normalized.args
+              const effectiveCommand = normalized === null ? command : normalized.command
               let rewritten
               try {
-                rewritten = await rewrite(command, exec?.signal)
+                rewritten = await rewrite(effectiveCommand, exec?.signal)
               } catch {
                 rewritten = null
               }
-              if (rewritten === null || rewritten === undefined) return base.execute(args, exec)
+              if (rewritten === null || rewritten === undefined) return base.execute(effectiveArgs, exec)
               // The shell — not this plugin — runs `rtk <cmd>`, so cwd, env,
               // PATH, sandbox and PTY are exactly the original ones.
               //
               // Deliberately OUTSIDE the guard above: an error thrown here
               // belongs to the tool body (a spawn failure, a cancellation), and
               // re-running the original command would execute it twice.
-              const result = await base.execute({ ...args, command: rewritten }, exec)
+              const result = await base.execute({ ...effectiveArgs, command: rewritten }, exec)
               const text = outputText(result)
               if (EXIT_127.test(text) && SHELL_RTK_MISSING.test(text)) {
                 // Exit 127 means nothing ran: re-running the original is safe.
@@ -313,7 +384,7 @@ export function apply(ctx, config = {}) {
                   const proof = SHELL_RTK_MISSING.exec(text)?.[0] ?? ''
                   ctx.logger?.warn?.(`rtk-rewrite: the tool shell cannot find \`rtk\` (${proof}) — rewriting disabled, commands run unmodified`)
                 }
-                return base.execute(args, exec)
+                return base.execute(effectiveArgs, exec)
               }
               missingStrikes = 0
               return result

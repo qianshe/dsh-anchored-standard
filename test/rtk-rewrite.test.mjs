@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { delimiter, join } from 'node:path'
 import test from 'node:test'
 
-import { apply, createRewriter, inject, name, resolveRtkPath, shouldRewrite } from '../shared/rtk-rewrite.mjs'
+import { apply, createRewriter, extractCd, inject, name, normalizeCd, resolveRtkPath, shouldRewrite } from '../shared/rtk-rewrite.mjs'
 
 /** A baseline `bash` definition shaped like the preset's shell rows. */
 function baseBash() {
@@ -336,6 +336,80 @@ test('output that merely mentions the phrase does not disable rewriting', async 
   await agentCall(shadow, { command: 'git diff', description: 'x' })
   assert.equal(calls.length, 3, 'every distinct command must still be offered to RTK')
   assert.deepEqual(warns, [])
+})
+
+const BACKSLASH = String.fromCharCode(92)
+
+test('extractCd moves a literal absolute cd prefix into workdir', () => {
+  assert.deepEqual(extractCd('cd /d/work && rg -n foo src'), { command: 'rg -n foo src', workdir: '/d/work' })
+  assert.deepEqual(extractCd('cd "D:/a b" && git status'), { command: 'git status', workdir: 'D:/a b' })
+  assert.deepEqual(extractCd(`cd 'C:${BACKSLASH}repo' && ls -la`), { command: 'ls -la', workdir: `C:${BACKSLASH}repo` })
+  assert.deepEqual(extractCd('cd /d/work && rg -n foo . | head'), { command: 'rg -n foo . | head', workdir: '/d/work' })
+})
+
+test('extractCd refuses shapes it cannot move safely', () => {
+  assert.equal(extractCd('cd relative && ls'), null)
+  assert.equal(extractCd('cd ~/x && ls'), null)
+  assert.equal(extractCd('cd /x && ls; rm y'), null)
+  assert.equal(extractCd('cd /x && ls && rm y'), null)
+  assert.equal(extractCd('cd /x && echo $(date)'), null)
+  assert.equal(extractCd('cd /x && cat <<EOF'), null)
+  assert.equal(extractCd('cd /x'), null)
+  assert.equal(extractCd('rg -n foo .'), null)
+  assert.equal(extractCd(undefined), null)
+})
+
+test('normalizeCd only applies to definitions that declare workdir', () => {
+  const withWorkdir = { parameters: { command: { type: 'string' }, workdir: { type: 'string' } } }
+  const rawSchema = { parameters: { type: 'object', properties: { command: {}, workdir: {} } } }
+  const without = { parameters: { command: { type: 'string' } } }
+  assert.deepEqual(
+    normalizeCd(withWorkdir, { command: 'cd /x && ls', description: 'd' }),
+    { args: { command: 'ls', workdir: '/x', description: 'd' }, command: 'ls' },
+  )
+  assert.deepEqual(
+    normalizeCd(rawSchema, { command: 'cd /x && ls' }),
+    { args: { command: 'ls', workdir: '/x' }, command: 'ls' },
+  )
+  assert.equal(normalizeCd(without, { command: 'cd /x && ls' }), null)
+  assert.equal(normalizeCd(withWorkdir, { command: 'cd /x && ls', workdir: 'keep' }), null)
+})
+
+test('the shadow moves a cd prefix into workdir when the tool supports it', async () => {
+  const seen = []
+  const withWorkdir = {
+    name: 'bash',
+    description: 'Run commands',
+    parameters: { command: { type: 'string', required: true }, workdir: { type: 'string' } },
+    output: { schema: { type: 'string' }, render: (_a, v) => [{ type: 'text', text: String(v) }] },
+    async execute(args) { seen.push(args); return `ran:${args.command}` },
+  }
+  const calls = []
+  const { start, registered, fire, makeAgent } = harness({
+    base: withWorkdir,
+    exec: fakeExec({ code: 1, calls }),
+  })
+  start()
+  fire('agent/created', { agent: makeAgent('a') })
+  assert.equal(await agentCall(registered[0], { command: 'cd "D:/work" && rg -n foo src', description: 'x' }), 'ran:rg -n foo src')
+  assert.equal(calls[0].args[1], 'rg -n foo src', 'RTK must be asked about the stripped command')
+  assert.deepEqual(seen[0], { command: 'rg -n foo src', workdir: 'D:/work', description: 'x' })
+})
+
+test('the shadow leaves a cd prefix alone when the tool has no workdir parameter', async () => {
+  const seen = []
+  const noWorkdir = {
+    name: 'bash',
+    description: 'Run commands',
+    parameters: { command: { type: 'string', required: true } },
+    output: { schema: { type: 'string' }, render: (_a, v) => [{ type: 'text', text: String(v) }] },
+    async execute(args) { seen.push(args); return `ran:${args.command}` },
+  }
+  const { start, registered, fire, makeAgent } = harness({ base: noWorkdir, exec: fakeExec({ code: 1 }) })
+  start()
+  fire('agent/created', { agent: makeAgent('a') })
+  await agentCall(registered[0], { command: 'cd /x && ls', description: 'x' })
+  assert.deepEqual(seen[0], { command: 'cd /x && ls', description: 'x' })
 })
 
 test('the real binary rewrites a supported command (opt-in RTK_BIN)', { skip: !process.env.RTK_BIN }, async () => {
