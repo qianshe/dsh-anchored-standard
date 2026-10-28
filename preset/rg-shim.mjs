@@ -26,9 +26,12 @@
  * a POSIX shell alone understands.
  */
 
+import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, symlinkSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+
+import { createEpochPromotion, sessionEvents } from './compaction-epoch.mjs'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'rg-shim'
@@ -158,6 +161,76 @@ export function writeShim(options) {
 }
 
 /**
+ * One post-promotion message telling the model that `rg` is now available.
+ *
+ * WORDING: factual, not imperative. The anchored preset measured that
+ * directive hint text ("read ... first and follow them") flips the "we /
+ * let's" trajectory back to "let me" (instruction-hint, issue #49), so this
+ * sentence states what the environment offers and when each tool fits.
+ */
+const HINT_TEXT = 'Environment: `rg` (ripgrep) and `grep` are both available in bash. '
+  + '`rg` reads .gitignore, so repository-wide searches are usually faster and quieter; '
+  + '`grep` stays the natural choice for filtering piped output. '
+  + 'RTK compresses both with the same output filter.'
+
+/** Durable session event types that count as a promotion signal. */
+const PROMOTE_EVENTS = {
+  'tool-call': ['tool/call'],
+  'assistant-message': ['assistant/message'],
+  either: ['tool/call', 'assistant/message'],
+}
+
+/** Register the once-per-session hint that makes `rg` discoverable. */
+function registerHint(ctx, config) {
+  const promoteOn = config.promoteOn ?? 'either'
+  const events = PROMOTE_EVENTS[promoteOn]
+  if (events === undefined) {
+    ctx.logger?.warn?.(`${name}: promoteOn must be "tool-call", "assistant-message" or "either"; hint disabled`)
+    return
+  }
+  const promotion = createEpochPromotion(events, { includeSubagents: config.includeSubagents === true })
+  ctx.on('session/event', (session, event) => promotion.observe(session, event))
+
+  /** Sessions whose hint is already durable in the log (restart-safe). */
+  const hinted = new Map()
+  const isDurable = (session) => {
+    const known = hinted.get(session.id)
+    if (known !== undefined) return known
+    const found = sessionEvents(session).some((event) =>
+      event.type === 'user/message' && event.data?.source?.kind === name,
+    )
+    hinted.set(session.id, found)
+    return found
+  }
+  ctx.on('session/event', (session, event) => {
+    if (event.type === 'user/message' && event.data?.source?.kind === name) hinted.set(session.id, true)
+  })
+
+  ctx.on('agent/pre-step', async ({ agent }, next) => {
+    const decision = await next()
+    try {
+      if (findRgOnPath() === null) return decision
+      if (promotion.status(agent).promoted !== true) return decision
+      const session = agent.session
+      if (session === undefined || isDurable(session)) return decision
+      hinted.set(session.id, true)
+      return {
+        ...decision,
+        messages: [...decision.messages, {
+          id: `rg-hint-${session.id}-${randomUUID()}`,
+          role: 'user',
+          content: [{ type: 'text', text: HINT_TEXT }],
+          source: { kind: name, form: 'hint' },
+        }],
+      }
+    } catch {
+      // A hint bug must never hurt the session.
+      return decision
+    }
+  }, { prepend: true })
+}
+
+/**
  * Ensure the model's bash can run `rg`, reusing a binary that already exists.
  *
  * @param {any} ctx - the preset-scope Cordis context.
@@ -166,7 +239,10 @@ export function writeShim(options) {
  */
 export function apply(ctx, config = {}) {
   try {
-    if (findRgOnPath() !== null) return 'present'
+    if (findRgOnPath() !== null) {
+      if (config.hint !== false) registerHint(ctx, config)
+      return 'present'
+    }
     const source = bundledCandidates({
       ...(config.rgPath === undefined ? {} : { rgPath: config.rgPath }),
       ...(process.resourcesPath === undefined ? {} : { resourcesPath: process.resourcesPath }),
@@ -182,6 +258,7 @@ export function apply(ctx, config = {}) {
     }
     const { status, target } = writeShim({ source, binDir })
     ctx.logger?.info?.(`rg-shim: ${status === 'current' ? 'rg already shimmed' : `rg ${status} from ${source}`} → ${target}`)
+    if (config.hint !== false && findRgOnPath() !== null) registerHint(ctx, config)
     return status
   } catch (error) {
     ctx.logger?.warn?.(`rg-shim: failed to expose the bundled ripgrep (${String(error)}) — bash keeps using grep`)

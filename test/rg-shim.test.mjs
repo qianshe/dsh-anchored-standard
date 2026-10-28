@@ -114,7 +114,7 @@ test('apply is a no-op when rg is already on PATH', () => {
   const dir = join(ROOT, 'path-rg')
   fakeFile('path-rg/' + BIN)
   const warns = []
-  const ctx = { logger: { warn: (m) => warns.push(m), info: () => {} } }
+  const ctx = { on: () => () => {}, logger: { warn: (m) => warns.push(m), info: () => {} } }
   const status = withPath(dir, () => apply(ctx, { binDir: join(ROOT, 'unused') }))
   assert.equal(status, 'present')
   assert.deepEqual(warns, [])
@@ -122,7 +122,7 @@ test('apply is a no-op when rg is already on PATH', () => {
 
 test('apply reports a missing source instead of writing anything', () => {
   const warns = []
-  const ctx = { logger: { warn: (m) => warns.push(m), info: () => {} } }
+  const ctx = { on: () => () => {}, logger: { warn: (m) => warns.push(m), info: () => {} } }
   const status = withPath('', () => apply(ctx, { rgPath: join(ROOT, 'no-such-rg'), binDir: join(ROOT, 'bin-missing') }))
   assert.equal(status, 'missing-source')
   assert.match(warns[0], /no bundled ripgrep/)
@@ -132,7 +132,7 @@ test('apply reports a missing source instead of writing anything', () => {
 test('apply refuses to write a shim into a directory PATH does not search', () => {
   const source = fakeFile('src/rg-source-3')
   const warns = []
-  const ctx = { logger: { warn: (m) => warns.push(m), info: () => {} } }
+  const ctx = { on: () => () => {}, logger: { warn: (m) => warns.push(m), info: () => {} } }
   const binDir = join(ROOT, 'bin-off-path')
   const status = withPath(join(ROOT, 'somewhere-else'), () => apply(ctx, { rgPath: source, binDir }))
   assert.equal(status, 'off-path')
@@ -140,11 +140,75 @@ test('apply refuses to write a shim into a directory PATH does not search', () =
   assert.equal(existsSync(binDir), false)
 })
 
+
+/** Register the plugin against a fake ctx that keeps every listener. */
+function hintHarness(config = {}) {
+  const listeners = new Map()
+  const ctx = {
+    on(event, callback, options) {
+      const list = listeners.get(event) ?? []
+      list.push({ callback, options })
+      listeners.set(event, list)
+      return () => {}
+    },
+    logger: { warn: () => {}, info: () => {} },
+  }
+  const dir = join(ROOT, 'hint-bin')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, BIN), 'fake')
+  const status = withPath(dir, () => apply(ctx, { binDir: dir, ...config }))
+  const preStep = () => {
+    const entries = listeners.get('agent/pre-step')
+    return entries === undefined ? undefined : entries.at(-1).callback
+  }
+  return { status, preStep, listeners }
+}
+
+const decision = () => ({ kind: 'enter', messages: [{ id: 'u', role: 'user', content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }] })
+const sessionWith = (events, id = 's') => ({ id, events, header: {} })
+
+test('after promotion the hint is injected once per session', async () => {
+  const { status, preStep } = hintHarness()
+  assert.equal(status, 'present')
+  const agent = { session: sessionWith([{ type: 'assistant/message', seq: 1, data: {} }]) }
+  const first = await preStep()({ agent }, async () => decision())
+  assert.equal(first.messages.length, 2)
+  const hint = first.messages[1]
+  assert.equal(hint.source.kind, 'rg-shim')
+  assert.match(hint.id, /^rg-hint-s-/)
+  assert.match(hint.content[0].text, /rg.*grep/)
+  const second = await preStep()({ agent }, async () => decision())
+  assert.equal(second.messages.length, 1)
+})
+
+test('pre-promotion requests and durable hints get nothing', async () => {
+  const { preStep } = hintHarness()
+  const cold = await preStep()({ agent: { session: sessionWith([]) } }, async () => decision())
+  assert.equal(cold.messages.length, 1)
+
+  const durable = await preStep()(
+    { agent: { session: sessionWith([{ type: 'user/message', seq: 2, data: { source: { kind: 'rg-shim' } } }]) } },
+    async () => decision(),
+  )
+  assert.equal(durable.messages.length, 1)
+})
+
+test('hint: false and a missing rg both skip the hint entirely', async () => {
+  const disabled = hintHarness({ hint: false })
+  assert.equal(disabled.preStep(), undefined)
+
+  const listeners = new Map()
+  const ctx = { on: (e, cb) => { listeners.set(e, cb) }, logger: { warn: () => {}, info: () => {} } }
+  const missing = withPath('', () => apply(ctx, { rgPath: join(ROOT, 'nope'), binDir: join(ROOT, 'nope-bin') }))
+  assert.equal(missing, 'missing-source')
+  assert.equal(listeners.get('agent/pre-step'), undefined)
+})
+
 test('apply links the bundled binary into a PATH directory, then reports present', () => {
   const source = fakeFile('src/rg-source-4', 'shim-me')
   const binDir = join(ROOT, 'bin-ok')
   mkdirSync(binDir, { recursive: true })
-  const ctx = { logger: { warn: () => {}, info: () => {} } }
+  const ctx = { on: () => () => {}, logger: { warn: () => {}, info: () => {} } }
   const status = withPath(binDir, () => apply(ctx, { rgPath: source, binDir }))
   assert.ok(['linked', 'copied'].includes(status), status)
   assert.equal(existsSync(join(binDir, BIN)), true)
