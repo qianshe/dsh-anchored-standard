@@ -193,6 +193,8 @@ function registerHint(ctx, config) {
 
   /** Sessions whose hint is already durable in the log (restart-safe). */
   const hinted = new Map()
+  /** One warning per process if the hint path throws. */
+  let warned = false
   const isDurable = (session) => {
     const known = hinted.get(session.id)
     if (known !== undefined) return known
@@ -223,8 +225,13 @@ function registerHint(ctx, config) {
           source: { kind: name, form: 'hint' },
         }],
       }
-    } catch {
-      // A hint bug must never hurt the session.
+    } catch (error) {
+      // A hint bug must never hurt the session — but it must not hide either:
+      // a swallowed hint is indistinguishable from a model that ignores it.
+      if (!warned) {
+        warned = true
+        ctx.logger?.warn?.(`${name}: hint skipped (${String(error)}) — rg still works, the model was just never told`)
+      }
       return decision
     }
   }, { prepend: true })
