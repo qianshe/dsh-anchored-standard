@@ -223,6 +223,39 @@
   name: ./custom-bash.mjs
   disabled: !!js process.platform !== 'win32'
 
+# -- token compression: transparent RTK rewriting ---------------------------
+#
+# RTK is not a prefix wrapper: `rtk <cmd>` RUNS the command and COMPRESSES ITS
+# OUTPUT (per-command filters: git status -> compact stat, ls -> tree + counts,
+# test runners -> failures only), forwards the underlying exit code, and points
+# at `rtk recall <hash>` when a filter trimmed a long list. `rtk rewrite <cmd>`
+# is only the trigger -- it answers whether a filter exists and returns the
+# prefixed string; every saving happens when that string runs in the REAL
+# shell. So this row rewrites the `command` argument and nothing else: cwd,
+# env, PATH, sandbox and PTY stay exactly the baseline tool's.
+#
+# WHY A SHADOW (not another `bash` row): the tools registry rejects duplicate
+# names within one layer, and the shell rows above already own `bash`. A
+# per-agent registration lands in the agent's own layer, where shadowing an
+# inherited name is supported. The definition is spread from the baseline, so
+# name/description/parameters stay BYTE-IDENTICAL -- the anchored first-request
+# catalog must not move (an edited description would break the anchor).
+#
+# FAIL-OPEN (mirrors hooks/pi/rtk.ts): rtk missing at load -> warn, register
+# nothing; `rtk rewrite` exit 1/2, timeout, abort, throw or empty stdout -> run
+# the original command; already `rtk `-prefixed or RTK_DISABLED=1 -> run the
+# original. Exit 3 is a REWRITE, not a refusal: on a machine that never ran
+# `rtk init` every rewrite answers 3.
+#
+# The rewrite affects EXECUTION ONLY: `tool/call` audit and the UI still show
+# the model's original command, and this row prints no per-call note -- the
+# note would spend the tokens the filter just saved.
+- id: rtk-rewrite
+  name: ./rtk-rewrite.mjs
+  config:
+    tools: [bash]
+    timeoutMs: 2000
+
 # ── filesystem ──────────────────────────────────────────────────────────────
 
 # Both register into the host `tools` registry and provide nothing, so
