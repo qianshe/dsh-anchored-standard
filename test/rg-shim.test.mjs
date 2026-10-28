@@ -176,7 +176,13 @@ test('after promotion the hint is injected once per session', async () => {
   const hint = first.messages[1]
   assert.equal(hint.source.kind, 'rg-shim')
   assert.match(hint.id, /^rg-hint-s-/)
-  assert.match(hint.content[0].text, /rg.*grep/)
+  const text = hint.content[0].text
+  // The hint carries the one fact the model cannot derive (this shell has rg)
+  // and nothing it already knows. Both halves of that contract are cheap to
+  // regress, so both are pinned: name the tool, and stay short.
+  assert.match(text, /\brg\b/)
+  assert.match(text, /bash/)
+  assert.ok(text.split(/\s+/).length <= 12, `hint grew to ${text.split(/\s+/).length} words: ${text}`)
   const second = await preStep()({ agent }, async () => decision())
   assert.equal(second.messages.length, 1)
 })

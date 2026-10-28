@@ -161,17 +161,26 @@ export function writeShim(options) {
 }
 
 /**
- * One post-promotion message telling the model that `rg` is now available.
+ * The one post-promotion line that makes `rg` discoverable.
  *
- * WORDING: factual, not imperative. The anchored preset measured that
+ * ONLY THE UNKNOWN. The model already knows what ripgrep is, that it honours
+ * .gitignore, that it pipes, and that grep is fine downstream — restating any
+ * of that spends context to tell it something it came with. What it cannot
+ * know from here is whether THIS shell has `rg` at all: in dsh the bundled
+ * ripgrep lives inside the app and every previous session ran on grep. So the
+ * hint carries exactly that one fact and lets prior knowledge do the rest.
+ *
+ * WORDING: factual, never imperative. The anchored preset measured that
  * directive hint text ("read ... first and follow them") flips the "we /
- * let's" trajectory back to "let me" (instruction-hint, issue #49), so this
- * sentence states what the environment offers and when each tool fits.
+ * let's" trajectory back to "let me" (instruction-hint, issue #49).
+ *
+ * ESCALATION LADDER — only climb when a session's measured adoption stays low
+ * (count bash calls matching `rg` vs `grep`):
+ *   1. `rg` is available.                                      <- here
+ *   2. + "repository-wide search is much faster with it than with `grep`"
+ *   3. + an imperative ("use rg for ...") — never: it costs the anchor.
  */
-const HINT_TEXT = 'Environment: `rg` (ripgrep) and `grep` are both available in bash. '
-  + '`rg` reads .gitignore, so repository-wide searches are usually faster and quieter; '
-  + '`grep` stays the natural choice for filtering piped output. '
-  + 'RTK compresses both with the same output filter.'
+const HINT_TEXT = 'Environment: `rg` (ripgrep) is available in this bash.'
 
 /** Durable session event types that count as a promotion signal. */
 const PROMOTE_EVENTS = {
