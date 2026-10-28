@@ -256,6 +256,19 @@
     tools: [bash]
     timeoutMs: 2000
 
+# -- reuse the ripgrep dsh already ships ------------------------------------
+#
+# dsh bundles `@vscode/ripgrep` and uses it internally for the native
+# grep/glob tools, but spawns it directly and never puts it on PATH, so the
+# model's bash cannot see `rg` (Codex does expose its vendored copy, which is
+# why `rg` works there). This row links — or copies, when symlinks are not
+# permitted — that same binary into `~/.local/bin` (already on PATH), so
+# `rg` becomes available with nothing downloaded or installed. It is a no-op
+# once a real ripgrep is on PATH, and a no-op when the directory is not on
+# PATH (it warns instead of writing an unusable shim).
+- id: rg-shim
+  name: ./rg-shim.mjs
+
 # ── filesystem ──────────────────────────────────────────────────────────────
 
 # Both register into the host `tools` registry and provide nothing, so

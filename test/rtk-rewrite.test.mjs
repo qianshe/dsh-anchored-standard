@@ -270,7 +270,7 @@ test('apply disposes the scoped registrations when the agent goes away', () => {
   assert.deepEqual(disposed, ['a'])
 })
 
-test('apply disables rewriting when the tool shell cannot find rtk (exit 127)', async () => {
+test('two consecutive shell-level 127 answers disable rewriting for the process', async () => {
   const calls = []
   const seen = []
   const flaky = {
@@ -292,15 +292,47 @@ test('apply disables rewriting when the tool shell cannot find rtk (exit 127)', 
   fire('agent/created', { agent: makeAgent('a') })
   const shadow = registered[0]
 
-  // First call: the rewrite runs, the shell answers 127, the original re-runs.
+  // First 127: fall back to the original for THIS call; rewriting stays on.
   assert.equal(await agentCall(shadow, { command: 'git status', description: 'x' }), 'ran:git status')
   assert.deepEqual(seen, ['rtk git status', 'git status'])
+  assert.equal(warns.length, 0)
+
+  // Second 127: now disabling, still re-running the original.
+  assert.equal(await agentCall(shadow, { command: 'git status', description: 'x' }), 'ran:git status')
   assert.match(warns.at(-1), /cannot find `rtk`/)
 
-  // Later calls skip `rtk rewrite` entirely.
+  // Later calls never ask RTK again (the first two shared one cached rewrite).
   assert.equal(await agentCall(shadow, { command: 'ls -la', description: 'x' }), 'ran:ls -la')
   assert.equal(calls.length, 1)
-  assert.deepEqual(seen, ['rtk git status', 'git status', 'ls -la'])
+  assert.deepEqual(seen.at(-1), 'ls -la')
+})
+
+test('output that merely mentions the phrase does not disable rewriting', async () => {
+  const calls = []
+  const quoted = {
+    name: 'bash',
+    description: 'Run commands in a bash shell',
+    parameters: { command: { type: 'string', required: true } },
+    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
+    async execute(args) {
+      // Documentation/test-fixture text, NOT a shell-level 127.
+      if (args.command.startsWith('rtk ')) return 'the docs say `rtk: command not found` when the binary is missing'
+      return `ran:${args.command}`
+    },
+  }
+  const { start, registered, fire, makeAgent, warns } = harness({
+    base: quoted,
+    exec: fakeExec({ code: 0, stdout: 'rtk git status', calls }),
+  })
+  start()
+  fire('agent/created', { agent: makeAgent('a') })
+  const shadow = registered[0]
+
+  await agentCall(shadow, { command: 'git status', description: 'x' })
+  await agentCall(shadow, { command: 'ls -la', description: 'x' })
+  await agentCall(shadow, { command: 'git diff', description: 'x' })
+  assert.equal(calls.length, 3, 'every distinct command must still be offered to RTK')
+  assert.deepEqual(warns, [])
 })
 
 test('the real binary rewrites a supported command (opt-in RTK_BIN)', { skip: !process.env.RTK_BIN }, async () => {

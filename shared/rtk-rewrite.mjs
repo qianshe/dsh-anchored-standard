@@ -58,13 +58,23 @@ const MAX_CACHE_ENTRIES = 256
 const REWRITE_EXIT_CODES = new Set([0, 3])
 
 /**
- * What a shell prints when `rtk` is not on ITS PATH. The plugin resolves the
- * binary from the harness process, but the tool's own shell can still disagree
- * (a login-shell rc, a scrubbed sandbox env). With a bare `rtk` rewrite that
- * disagreement turns every filtered call into exit 127, so the first such
- * answer disables rewriting and re-runs the original command instead.
+ * What a shell prints when `rtk` ITSELF is missing from the tool's PATH.
+ *
+ * The plugin resolves the binary from the harness process, but the tool's own
+ * shell can still disagree (a login-shell rc, a scrubbed sandbox env). The
+ * match is deliberately narrow — a shell prefix, plus the 127 exit marker
+ * checked by the caller — because a loose "rtk: not found" substring also
+ * appears in documentation, test fixtures and ordinary command output; matching
+ * that disabled rewriting for the whole process the first time such text went
+ * through bash (observed in practice).
  */
-const RTK_MISSING_OUTPUT = /(?:^|\n)[^\n]*\brtk: (?:command )?not found\b|'rtk' is not recognized as an internal or external command/i
+const SHELL_RTK_MISSING = /\bbash: [^\n]*\brtk: command not found\b|\bsh: [^\n]*\brtk: not found\b|'rtk' is not recognized as an internal or external command/i
+
+/** The bash tool's machine-readable non-zero exit marker. */
+const EXIT_127 = /\bexit code: 127\b/i
+
+/** Consecutive shell-missing answers before rewriting is switched off. */
+const MISSING_STRIKES_TO_DISABLE = 2
 
 /** Best-effort text of a tool's canonical value (string or `{ text }`). */
 function outputText(value) {
@@ -203,8 +213,10 @@ export function apply(ctx, config = {}) {
   const installs = new Map()
   /** Re-entrancy guard: our own registration emits `tools/change` synchronously. */
   const installing = new Set()
-  /** Set when the tool's shell proves it cannot see `rtk` (exit 127). */
+  /** Set when the tool's shell repeatedly proves it cannot see `rtk` (exit 127). */
   let disabled = false
+  /** Consecutive exit-127 answers; any other rewritten answer clears it. */
+  let missingStrikes = 0
 
   const install = (agent) => {
     if (agent === undefined || agent === null) return
@@ -232,13 +244,20 @@ export function apply(ctx, config = {}) {
                 // The shell — not this plugin — runs `rtk <cmd>`, so cwd,
                 // env, PATH, sandbox and PTY are exactly the original ones.
                 const result = await base.execute({ ...args, command: rewritten }, exec)
-                if (RTK_MISSING_OUTPUT.test(outputText(result))) {
-                  // Exit 127 means nothing ran: re-running the original is safe,
-                  // and one failed call beats a session where bash is broken.
-                  disabled = true
-                  ctx.logger?.warn?.('rtk-rewrite: the tool shell cannot find `rtk` — rewriting disabled, commands run unmodified')
+                const text = outputText(result)
+                if (EXIT_127.test(text) && SHELL_RTK_MISSING.test(text)) {
+                  // Exit 127 means nothing ran: re-running the original is safe.
+                  // Two consecutive answers disable rewriting for the process, so
+                  // a misconfigured PATH degrades to plain bash instead of
+                  // failing every filtered call.
+                  missingStrikes += 1
+                  if (missingStrikes >= MISSING_STRIKES_TO_DISABLE && !disabled) {
+                    disabled = true
+                    ctx.logger?.warn?.('rtk-rewrite: the tool shell cannot find `rtk` — rewriting disabled, commands run unmodified')
+                  }
                   return base.execute(args, exec)
                 }
+                missingStrikes = 0
                 return result
               } catch {
                 return base.execute(args, exec)
