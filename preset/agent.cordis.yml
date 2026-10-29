@@ -255,11 +255,12 @@
   config:
     tools: [bash]
     timeoutMs: 2000
-    # A/B: false restores the pre-normalization execution shape (the shell sees
-    # the model's original `cd <abs> && ...` command and RTK is asked about it
-    # verbatim). The normalization is invisible in the tool-call audit, so this
-    # switch is the only way to measure what it changes downstream.
-    cdNormalize: false
+    # Default: move a literal `cd <abs> && ...` prefix into this tool's own
+    # `workdir` so RTK is asked about a single command and result paths stay
+    # relative. `false` restores the pre-normalization shape for an A/B; the
+    # normalization is invisible in the tool-call audit, so the switch is the
+    # only way to tell what it changes downstream.
+    cdNormalize: true
 
 # -- reuse the ripgrep dsh already ships ------------------------------------
 #
