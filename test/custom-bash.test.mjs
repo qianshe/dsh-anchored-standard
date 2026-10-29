@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { apply, bashCandidates, name, inject, normalizeGitBashWorkdir } from '../shared/custom-bash.mjs'
+import { apply, bashCandidates, name, inject, normalizeGitBashWorkdir, opensWithRedundantCd } from '../shared/custom-bash.mjs'
 
 function register(config) {
   const registered = []
@@ -65,6 +65,9 @@ test('registers the bash tool with a Minimal-compatible description', () => {
   const { tool } = register()
   assert.equal(tool.name, 'bash')
   assert.match(tool.description, /Run commands in a bash shell/)
+  // The one sentence that stops the defensive `cd`: the schema is re-read on
+  // every request, so this is the only place the fact is guaranteed to be seen.
+  assert.match(tool.description, /fresh shell that already starts in the session workspace root/)
   assert.ok(tool.parameters.required.includes('command'))
   assert.ok(tool.output.schema)
 })
@@ -375,4 +378,45 @@ test('bashCandidates derives the portable mingw64 layout and skips an unresolved
   const envOnly = [join('/home/u', 'scoop', 'apps', 'git', 'current', 'bin', 'bash.exe')]
   assert.deepEqual(bashCandidates(env, 'git'), envOnly)
   assert.deepEqual(bashCandidates(env, undefined), envOnly)
+})
+
+const BACKSLASH = String.fromCharCode(92)
+
+test('opensWithRedundantCd recognises a cd into the directory the shell starts in', () => {
+  assert.equal(opensWithRedundantCd('cd /d/ws && ls', 'D:/ws', 'win32'), true)
+  assert.equal(opensWithRedundantCd(`cd "${'D:' + BACKSLASH}ws" && ls`, 'D:/ws', 'win32'), true)
+  assert.equal(opensWithRedundantCd('cd /d/ws &&pwd', '/d/ws', 'win32'), true)
+  assert.equal(opensWithRedundantCd('cd /d/ws && cd /x && ls', '/d/ws', 'win32'), true)
+  // Anything that is NOT the start directory must be left alone: the cd does work there.
+  assert.equal(opensWithRedundantCd('cd /d/other && ls', '/d/ws', 'win32'), false)
+  assert.equal(opensWithRedundantCd('cd relative && ls', '/d/ws', 'win32'), false)
+  assert.equal(opensWithRedundantCd('cd /d/ws &&& ls', '/d/ws', 'win32'), false)
+  assert.equal(opensWithRedundantCd('cd /d/ws &&', '/d/ws', 'win32'), false)
+  assert.equal(opensWithRedundantCd('ls -la', '/d/ws', 'win32'), false)
+  assert.equal(opensWithRedundantCd(undefined, '/d/ws', 'win32'), false)
+})
+
+test('a redundant cd is reported once per session, not once per call', async () => {
+  const { tool } = register({ bashPath: 'C:/Program Files/Git/bin/bash.exe' })
+  const session = { id: 's-cd', header: { cwd: 'C:/work' } }
+  const run = (command) => tool.execute({ command }, { agent: { session }, signal: undefined })
+
+  const first = await run('cd C:/work && ls')
+  assert.match(first.text, /already starts in the session workspace root/)
+
+  const second = await run('cd C:/work && ls')
+  assert.doesNotMatch(second.text, /already starts in the session workspace root/)
+
+  // A different session is told again, and never more than once.
+  const other = { id: 's-other', header: { cwd: 'C:/work' } }
+  const third = await tool.execute({ command: 'cd C:/work && ls' }, { agent: { session: other }, signal: undefined })
+  assert.match(third.text, /already starts in the session workspace root/)
+})
+
+test('a cd into another directory is executed verbatim and never reported', async () => {
+  const { tool, spawnCalls } = register({ bashPath: 'C:/Program Files/Git/bin/bash.exe' })
+  const session = { id: 's-elsewhere', header: { cwd: 'C:/work' } }
+  const result = await tool.execute({ command: 'cd D:/elsewhere && ls' }, { agent: { session }, signal: undefined })
+  assert.equal(spawnCalls[0].argv[2], 'cd D:/elsewhere && ls')
+  assert.doesNotMatch(result.text, /workspace root/)
 })

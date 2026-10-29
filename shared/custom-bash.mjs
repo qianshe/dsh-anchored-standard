@@ -95,6 +95,63 @@ export function normalizeGitBashWorkdir(workdir, platform = process.platform) {
   return rest ? `${match[1].toUpperCase()}:\\${rest}` : `${match[1].toUpperCase()}:\\`
 }
 
+/** Two directory spellings that name the same place (`/d/x` == `D:\x` on win32). */
+function sameDir(left, right, platform = process.platform) {
+  // Built without backslash literals: a stray escape layer cannot silently turn
+  // this into "slashes only" and make every comparison fail.
+  const backslash = String.fromCharCode(92)
+  const canonical = (value) => {
+    const native = normalizeGitBashWorkdir(String(value), platform).split(backslash).join('/')
+    const collapsed = native.replace(/\/{2,}/g, '/').replace(/\/+$/, '')
+    return platform === 'win32' ? collapsed.toLowerCase() : collapsed
+  }
+  return canonical(left) === canonical(right)
+}
+
+/**
+ * Whether `command` opens with `cd <the directory this shell starts in> && …`.
+ *
+ * Such a prefix cannot change what the command does — the shell is already
+ * there. The description now says where a fresh shell starts, but a sentence in
+ * a schema is not proof that the habit dies, so a violation is still worth one
+ * line of feedback. Returns the fact instead of acting on it: the command is
+ * executed exactly as written.
+ *
+ * @param {unknown} command - the tool's `command` argument.
+ * @param {unknown} workdir - the directory the shell will actually start in.
+ * @param {string} [platform]
+ * @returns {boolean}
+ */
+export function opensWithRedundantCd(command, workdir, platform = process.platform) {
+  if (typeof command !== 'string' || typeof workdir !== 'string' || workdir === '') return false
+  const match = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s*&&\s*([^&\s][\s\S]*)$/.exec(command)
+  if (match === null) return false
+  const target = match[1] ?? match[2] ?? match[3]
+  return target === undefined ? false : sameDir(target, workdir, platform)
+}
+
+/** Said once per session, in the result of the first redundant-`cd` call. */
+const REDUNDANT_CD_NOTE = '[custom-bash] this shell already starts in the session workspace root; the leading `cd` adds nothing\n'
+
+/** Sessions already told about the redundant `cd` (WeakSet: no leak, no bookkeeping). */
+const cdNoticeSeen = new WeakSet()
+/** Fallback for calls with no session object. */
+let cdNoticeSaid = false
+
+/** Whether this call is the first redundant-`cd` call of its session. */
+function shouldAnnounceRedundantCd(exec, command, workdir) {
+  if (!opensWithRedundantCd(command, workdir)) return false
+  const session = exec?.agent?.session
+  if (session === undefined || session === null) {
+    if (cdNoticeSaid) return false
+    cdNoticeSaid = true
+    return true
+  }
+  if (cdNoticeSeen.has(session)) return false
+  cdNoticeSeen.add(session)
+  return true
+}
+
 function isWorkdirEnoent(error) {
   return /\bENOENT\b/.test(String((error && error.message) || error || ''))
 }
@@ -173,7 +230,7 @@ export function apply(ctx, config) {
       '* When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.',
       "* You don't have access to the internet via this tool.",
       '* You do have access to a mirror of common linux and python packages via apt and pip.',
-      '* State does NOT persist across command calls: each call runs in a fresh shell.',
+      '* State does NOT persist across command calls: each call runs in a fresh shell that already starts in the session workspace root.',
       "* To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.",
       '* Please avoid commands that may produce a very large amount of output.',
       '* NOTE: runs without OS sandbox confinement on Windows (no landlock); treat output as untrusted.',
@@ -245,9 +302,9 @@ export function apply(ctx, config) {
       } catch {
         // Collected readers may be unavailable on some backends; tolerate.
       }
-      const note = usedFallback
+      const note = (usedFallback
         ? `[custom-bash] workdir ${requested} was unusable (ENOENT); fell back to session cwd\n`
-        : ''
+        : '') + (shouldAnnounceRedundantCd(exec, args.command, workdir) ? REDUNDANT_CD_NOTE : '')
       const text = [stdout, stderr].filter((part) => part.length > 0).join('\n')
       const tail = note + (text.length > 0 ? text : `exit code: ${outcome.exitCode} (no output)`)
       if (outcome.exitCode !== 0) {
