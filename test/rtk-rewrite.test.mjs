@@ -396,6 +396,27 @@ test('the shadow moves a cd prefix into workdir when the tool supports it', asyn
   assert.deepEqual(seen[0], { command: 'rg -n foo src', workdir: 'D:/work', description: 'x' })
 })
 
+test('cdNormalize: false hands the compound command through untouched', async () => {
+  const seen = []
+  const withWorkdir = {
+    name: 'bash',
+    description: 'Run commands',
+    parameters: { command: { type: 'string', required: true }, workdir: { type: 'string' } },
+    output: { schema: { type: 'string' }, render: (_a, v) => [{ type: 'text', text: String(v) }] },
+    async execute(args) { seen.push(args); return `ran:${args.command}` },
+  }
+  const calls = []
+  const { start, registered, fire, makeAgent } = harness({ base: withWorkdir, exec: fakeExec({ code: 1, calls }) })
+  start({ cdNormalize: false })
+  fire('agent/created', { agent: makeAgent('a') })
+  const original = 'cd "D:/work" && rg -n foo src'
+  assert.equal(await agentCall(registered[0], { command: original, description: 'x' }), `ran:${original}`)
+  // RTK is asked about the command exactly as the model wrote it.
+  assert.equal(calls[0].args[1], original)
+  // No workdir is injected: the shell receives the original arguments.
+  assert.deepEqual(seen[0], { command: original, description: 'x' })
+})
+
 test('the shadow leaves a cd prefix alone when the tool has no workdir parameter', async () => {
   const seen = []
   const noWorkdir = {

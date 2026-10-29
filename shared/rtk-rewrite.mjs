@@ -265,10 +265,22 @@ export function createRewriter(options) {
  * never sees the shadow.
  *
  * @param {any} ctx - the preset-scope Cordis context.
- * @param {{ tools?: string[], rtkPath?: string, timeoutMs?: number, exec?: Function }} [config]
+ * @param {{ tools?: string[], rtkPath?: string, timeoutMs?: number, cdNormalize?: boolean, exec?: Function }} [config]
  */
 export function apply(ctx, config = {}) {
   const toolNames = Array.isArray(config.tools) && config.tools.length > 0 ? config.tools : ['bash']
+  /**
+   * Whether a literal `cd <abs> && ...` prefix is moved into the tool's own
+   * `workdir` before RTK is asked about the command.
+   *
+   * Default ON. Set `false` to restore the exact pre-normalization execution
+   * shape: the model's original compound command reaches the shell untouched
+   * and RTK is asked about it verbatim. The normalization is invisible in the
+   * `tool/call` audit (it happens inside `execute` and is never written back
+   * to the session log), so turning it off is the only way to measure whether
+   * it changes what the model sees downstream.
+   */
+  const cdNormalize = config.cdNormalize !== false
   const rtkPath = config.rtkPath ?? resolveRtkPath()
   if (rtkPath === null || rtkPath === undefined || rtkPath === '') {
     ctx.logger?.warn?.('rtk-rewrite: rtk not found in PATH — command rewriting disabled')
@@ -355,7 +367,8 @@ export function apply(ctx, config = {}) {
               // Move a literal `cd <abs> &&` prefix into the tool's own
               // `workdir` so RTK sees a single command (and result paths stay
               // relative). Definitions without a `workdir` parameter are untouched.
-              const normalized = normalizeCd(base, args)
+              // `cdNormalize: false` skips this and hands the command through as written.
+              const normalized = cdNormalize ? normalizeCd(base, args) : null
               const effectiveArgs = normalized === null ? args : normalized.args
               const effectiveCommand = normalized === null ? command : normalized.command
               let rewritten
