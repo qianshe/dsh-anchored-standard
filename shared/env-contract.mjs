@@ -6,13 +6,11 @@
  * every NEW session starts without knowing facts that decide whether the model
  * wastes tokens:
  *
- *   1. `bash` already runs in the session workspace, so `cd "D:/…" && …` is
- *      redundant — it costs ~12-15 generated tokens per call and makes every
- *      result line carry a long absolute path. On Windows the bash row belongs
- *      to this preset and says so in its DESCRIPTION (paid for on every
- *      request, so stated once); on POSIX the row belongs to the host and the
- *      contract is the only place the fact fits.
+ *   1. Windows bash defaults to the workspace root on each fresh call. POSIX
+ *      bash starts there initially, but later calls retain directory changes.
+ *      These facts belong after promotion; the anchored tool description stays fixed.
  *   2. `rg` is available: rg-shim put the ripgrep dsh already ships on PATH.
+ *   3. Routine execution uses thinking/tools; questions and results stay visible.
  *
  * NOTHING ABOUT RTK. Rewriting is transparent by design — the model sees the
  * same output it would have seen from an unwrapped command, and the one case
@@ -24,7 +22,7 @@
  * ONLY THE UNKNOWN, NOTHING DERIVABLE. The model already knows what ripgrep
  * does with .gitignore and that grep fits pipes; restating that spends context
  * to say nothing. What it cannot know from inside the prompt is whether THIS
- * shell has `rg` and where bash starts.
+ * shell has `rg`, where bash starts, and the preset's reporting convention.
  *
  * Injecting this into the SYSTEM PROMPT would defeat the anchor (every request
  * would carry it, including request #1). Injecting it as one durable
@@ -61,16 +59,12 @@ const ALLOWED_KEYS = new Set(['promoteOn', 'includeSubagents', 'text'])
 /** Header every contract opens with. */
 const HEADER = 'Environment facts for this session:'
 
-/**
- * Where bash starts — only off Windows.
- *
- * On Windows the `bash` row is this preset's own custom-bash, whose tool
- * description states the same fact on every request; repeating it here would
- * be paid for twice. On POSIX that row is disabled and the shell belongs to the
- * host, whose description this preset cannot touch, so the contract is the only
- * place the fact can appear.
- */
-const CWD_LINE = '- bash already starts in the workspace root; relative paths are enough.'
+/** Shell defaults, stated after promotion on every platform. */
+const CWD_LINE_FRESH = '- bash defaults to the session workspace root on each call unless workdir is supplied; relative paths need no leading `cd`.'
+const CWD_LINE_PERSISTENT = '- bash initially starts in the session workspace root; later calls retain directory changes made by `cd`.'
+
+/** Experimental reporting convention; effectiveness still needs neutral-task A/B evidence. */
+const EXECUTION_LINE = '- Unless progress reports are requested, routine execution uses thinking and tool calls; assistant replies carry necessary questions, blockers, and the final result.'
 
 /** Added only when a real `rg` is on PATH. */
 const RG_LINE = '- `rg` (ripgrep) is on PATH and reads .gitignore.'
@@ -85,7 +79,7 @@ function parsePromoteOn(value) {
  * Build the contract text for the current environment.
  *
  * @param {string | undefined} override - `config.text`, used verbatim when set.
- * @param {string} [platform] - injectable for tests.
+ * @param {string} [platform] - selects fresh Windows or persistent POSIX shell facts.
  */
 export function contractText(override, platform = process.platform) {
   if (typeof override === 'string') {
@@ -94,7 +88,7 @@ export function contractText(override, platform = process.platform) {
   }
   const lines = [HEADER]
   if (findRgOnPath() !== null) lines.push(RG_LINE)
-  if (platform !== 'win32') lines.push(CWD_LINE)
+  lines.push(platform === 'win32' ? CWD_LINE_FRESH : CWD_LINE_PERSISTENT, EXECUTION_LINE)
   return lines.join('\n')
 }
 

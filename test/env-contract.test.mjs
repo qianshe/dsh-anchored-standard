@@ -72,8 +72,16 @@ test('the contract names only what the model cannot know, and claims rg only whe
   assert.doesNotMatch(withoutRg, /`rg`/)
 
   const winContract = withPath('', () => contractText(undefined, 'win32'))
-  // The Windows bash row says this in its description on every request.
-  assert.doesNotMatch(winContract, /workspace root/)
+  assert.match(winContract, /defaults to the session workspace root on each call unless workdir is supplied/)
+  assert.match(winContract, /relative paths need no leading `cd`/)
+  assert.notEqual(winContract, withoutRg)
+  for (const platform of ['linux', 'darwin']) {
+    const persistent = withPath('', () => contractText(undefined, platform))
+    assert.match(persistent, /initially starts in the session workspace root/)
+    assert.match(persistent, /later calls retain directory changes made by `cd`/)
+    assert.doesNotMatch(persistent, /on (?:every|each) call|need no leading `cd`/)
+  }
+  assert.equal(withPath('', () => contractText()), process.platform === 'win32' ? winContract : withoutRg)
 
   const withRg = withPath(rgDir(), () => contractText(undefined, 'linux'))
   assert.ok(withRg.includes('`rg` (ripgrep) is on PATH'), withRg)
@@ -83,9 +91,15 @@ test('the contract names only what the model cannot know, and claims rg only whe
   // session to teach what the results teach on demand.
   for (const text of [withoutRg, winContract, withRg]) assert.doesNotMatch(text, /rtk/i)
 
-  // Occam guard: facts, not a style guide.
-  const words = withRg.replaceAll(String.fromCharCode(10), ' ').split(' ').filter(Boolean).length
-  assert.ok(words <= 40, `contract grew to ${words} words`)
+  assert.match(withRg, /Unless progress reports are requested/)
+  assert.match(withRg, /necessary questions, blockers, and the final result/)
+
+  // Keep the post-promotion convention compact.
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    const text = withPath(rgDir(), () => contractText(undefined, platform))
+    const words = text.split(/\s+/).filter(Boolean).length
+    assert.ok(words <= 80, `${platform} contract grew to ${words} words`)
+  }
 })
 
 test('pre-promotion requests get no contract', async () => {

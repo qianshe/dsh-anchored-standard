@@ -277,11 +277,11 @@
 
 # -- environment contract, stated once after promotion ----------------------
 #
-# A new session otherwise has to rediscover two facts by trial and error: bash
-# already runs in the workspace root (so `cd "D:/..." && ...` is pure overhead
-# and lengthens every result path), and `rg` — the ripgrep rg-shim put on PATH
-# — reads .gitignore. One durable post-promotion `user/message` states both for
-# the rest of the session.
+# One post-promotion message states platform-specific shell facts:
+# Windows defaults each fresh call to the workspace unless workdir is supplied;
+# POSIX starts there initially, then retains cd changes across calls.
+# The message also states rg availability and an experimental reporting convention;
+# quiet execution still needs neutral-task A/B evidence.
 #
 # Nothing about RTK: rewriting is transparent, and the one case that is not
 # self-explanatory (a filter elided lines) prints its own `rtk recall <hash>`

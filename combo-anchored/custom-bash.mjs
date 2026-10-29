@@ -112,8 +112,8 @@ function sameDir(left, right, platform = process.platform) {
  * Whether `command` opens with `cd <the directory this shell starts in> && …`.
  *
  * Such a prefix cannot change what the command does — the shell is already
- * there. The description now says where a fresh shell starts, but a sentence in
- * a schema is not proof that the habit dies, so a violation is still worth one
+ * there. The post-promotion contract states where a fresh shell starts without
+ * changing the anchored first-request schema. A violation is still worth one
  * line of feedback. Returns the fact instead of acting on it: the command is
  * executed exactly as written.
  *
@@ -230,7 +230,7 @@ export function apply(ctx, config) {
       '* When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.',
       "* You don't have access to the internet via this tool.",
       '* You do have access to a mirror of common linux and python packages via apt and pip.',
-      '* State does NOT persist across command calls: each call runs in a fresh shell that already starts in the session workspace root.',
+      '* State does NOT persist across command calls: each call runs in a fresh shell.',
       "* To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.",
       '* Please avoid commands that may produce a very large amount of output.',
       '* NOTE: runs without OS sandbox confinement on Windows (no landlock); treat output as untrusted.',

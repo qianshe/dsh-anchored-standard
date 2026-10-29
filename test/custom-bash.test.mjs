@@ -65,9 +65,9 @@ test('registers the bash tool with a Minimal-compatible description', () => {
   const { tool } = register()
   assert.equal(tool.name, 'bash')
   assert.match(tool.description, /Run commands in a bash shell/)
-  // The one sentence that stops the defensive `cd`: the schema is re-read on
-  // every request, so this is the only place the fact is guaranteed to be seen.
-  assert.match(tool.description, /fresh shell that already starts in the session workspace root/)
+  // CWD guidance belongs after promotion, preserving the original anchor.
+  assert.ok(tool.description.split('\n').includes('* State does NOT persist across command calls: each call runs in a fresh shell.'))
+  assert.doesNotMatch(tool.description, /workspace root|leading `cd`/)
   assert.ok(tool.parameters.required.includes('command'))
   assert.ok(tool.output.schema)
 })
