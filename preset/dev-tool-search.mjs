@@ -55,6 +55,7 @@ function toJsonSchema(spec) {
  */
 const UNLOCKABLE_INDEX = [
   'web_search — internet search and web retrieval',
+  'context_search — semantic code search over the workspace (needs the dsh-assistant-optimization plugin and a Windsurf key; absent when unconfigured)',
   'subagent / subagent_fork / list_subagent_models — delegate work to sub-agents and choose their LLM',
   'workflow — run multi-agent workflow scripts',
   'ralph — fresh-agent iterative loop',

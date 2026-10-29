@@ -31,6 +31,11 @@ test('registers the dev_tool_search tool with an unlock capability index', () =>
   assert.ok(tool)
   assert.match(tool.description, /web_search/)
   assert.match(tool.description, /subagent/)
+  // Plugin-provided tools are invisible unless the index names them: the
+  // resident set is fixed by tool-bootstrap, so an unlisted tool reads as
+  // nonexistent to the model. context_search (dsh-assistant-optimization) is
+  // the case this guards.
+  assert.match(tool.description, /context_search/)
   assert.ok(tool.parameters.properties.query)
   assert.ok(tool.parameters.properties.toolNames)
   assert.ok(tool.output.schema)
